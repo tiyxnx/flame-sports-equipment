@@ -16,8 +16,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     last_login_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
-
--- Index for fast email lookup
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users (lower(email));
 
 -- 3. Sports Table
@@ -28,6 +27,7 @@ CREATE TABLE IF NOT EXISTS public.sports (
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
+ALTER TABLE public.sports ENABLE ROW LEVEL SECURITY;
 
 -- 4. Equipment Types Table
 CREATE TABLE IF NOT EXISTS public.equipment_types (
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS public.equipment_types (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     UNIQUE(sport_id, name)
 );
+ALTER TABLE public.equipment_types ENABLE ROW LEVEL SECURITY;
 
 -- 5. Inventory Items Table
 CREATE TABLE IF NOT EXISTS public.inventory_items (
@@ -53,7 +54,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_items (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     UNIQUE(sport_id, equipment_type_id, equipment_number)
 );
-
+ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_inventory_status ON public.inventory_items(status);
 CREATE INDEX IF NOT EXISTS idx_inventory_sport ON public.inventory_items(sport_id, equipment_type_id);
 
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS public.equipment_issues (
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
+ALTER TABLE public.equipment_issues ENABLE ROW LEVEL SECURITY;
 
 -- CRITICAL RULE 1: Exactly ONE active issue per student at any time!
 CREATE UNIQUE INDEX IF NOT EXISTS unique_active_issue_per_student
@@ -115,6 +117,7 @@ CREATE TABLE IF NOT EXISTS public.return_verification_events (
     photo_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
+ALTER TABLE public.return_verification_events ENABLE ROW LEVEL SECURITY;
 
 -- 8. Damage Reports
 CREATE TABLE IF NOT EXISTS public.damage_reports (
@@ -135,6 +138,7 @@ CREATE TABLE IF NOT EXISTS public.damage_reports (
     resolution_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
+ALTER TABLE public.damage_reports ENABLE ROW LEVEL SECURITY;
 
 -- 9. Notification Log
 CREATE TABLE IF NOT EXISTS public.notification_logs (
@@ -153,6 +157,7 @@ CREATE TABLE IF NOT EXISTS public.notification_logs (
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
+ALTER TABLE public.notification_logs ENABLE ROW LEVEL SECURITY;
 
 -- 10. Audit Logs
 CREATE TABLE IF NOT EXISTS public.audit_logs (
@@ -165,19 +170,11 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES (with DROP IF EXISTS to avoid errors)
+-- ROW LEVEL SECURITY (RLS) POLICIES
 -- ====================================================================
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sports ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.equipment_types ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.equipment_issues ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.return_verification_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.damage_reports ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.notification_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- 1. Sports Policies
 DROP POLICY IF EXISTS "Anyone can view active sports" ON public.sports;
