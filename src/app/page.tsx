@@ -5,15 +5,13 @@ import { User } from "@/types";
 import Header from "@/components/Header";
 import StudentDashboard from "@/components/StudentDashboard";
 import AdminDashboard from "@/components/AdminDashboard";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
-import { ShieldCheck, AlertCircle, ArrowRight, Mail } from "lucide-react";
+import { supabase } from "@/lib/supabase/client";
+import { ShieldCheck, AlertCircle } from "lucide-react";
 
 export default function HomePage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [inputEmail, setInputEmail] = useState<string>("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
-  const [showManualEmail, setShowManualEmail] = useState<boolean>(false);
 
   // Check URL parameters for OAuth callback or errors
   useEffect(() => {
@@ -26,10 +24,10 @@ export default function HomePage() {
         setAuthError(decodeURIComponent(errorMsg));
         window.history.replaceState({}, document.title, window.location.pathname);
       } else if (authEmail) {
-        handleDirectLogin(decodeURIComponent(authEmail));
+        handleOAuthSuccess(decodeURIComponent(authEmail));
         window.history.replaceState({}, document.title, window.location.pathname);
       } else {
-        // Restore session from localStorage
+        // Restore existing authenticated session from localStorage
         const saved = localStorage.getItem("flame_sports_user");
         if (saved) {
           try {
@@ -43,30 +41,23 @@ export default function HomePage() {
     }
   }, []);
 
-  // Direct login / sync helper
-  const handleDirectLogin = async (emailToAuth: string, customName?: string) => {
+  const handleOAuthSuccess = async (email: string) => {
     setIsAuthenticating(true);
-    setAuthError(null);
-
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: emailToAuth, name: customName }),
+        body: JSON.stringify({ email }),
       });
-
       const data = await res.json();
-
-      if (!res.ok) {
+      if (res.ok && data.user) {
+        setCurrentUser(data.user);
+        localStorage.setItem("flame_sports_user", JSON.stringify(data.user));
+      } else {
         setAuthError(data.error || "Authentication failed.");
-        setIsAuthenticating(false);
-        return;
       }
-
-      setCurrentUser(data.user);
-      localStorage.setItem("flame_sports_user", JSON.stringify(data.user));
     } catch {
-      setAuthError("Network connection error. Please try again.");
+      setAuthError("Failed to synchronize session.");
     } finally {
       setIsAuthenticating(false);
     }
@@ -77,42 +68,34 @@ export default function HomePage() {
     setIsAuthenticating(true);
     setAuthError(null);
 
-    if (supabase && isSupabaseConfigured) {
-      try {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: `${window.location.origin}/auth/callback`,
-            queryParams: {
-              hd: "flame.edu.in", // Restricts to FLAME domain
-              prompt: "select_account",
-            },
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: {
+            hd: "flame.edu.in", // Restricts to official FLAME domain
+            prompt: "select_account",
           },
-        });
+        },
+      });
 
-        if (error) {
-          setAuthError(error.message);
-          setIsAuthenticating(false);
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Google Sign-In failed.";
-        setAuthError(msg);
+      if (error) {
+        setAuthError(error.message);
         setIsAuthenticating(false);
       }
-    } else {
-      // If Supabase keys are not yet pasted into environment variables, explain clearly
-      setShowManualEmail(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Google Sign-In failed.";
+      setAuthError(msg);
       setIsAuthenticating(false);
     }
   };
 
   const handleLogout = async () => {
-    if (supabase && isSupabaseConfigured) {
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // ignore
-      }
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
     }
     setCurrentUser(null);
     localStorage.removeItem("flame_sports_user");
@@ -124,7 +107,7 @@ export default function HomePage() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex items-center justify-center">
         {!currentUser ? (
-          /* Official FLAME Landing & Login Card */
+          /* Official FLAME Landing & Google Login */
           <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-xl border border-slate-200 text-center space-y-6">
             {/* University Crest Badge */}
             <div className="mx-auto w-16 h-16 rounded-2xl bg-[#C8102E] text-white font-black text-2xl flex items-center justify-center shadow-lg border-2 border-red-500">
@@ -139,7 +122,7 @@ export default function HomePage() {
                 Digital Sports Equipment Room
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
-                Scan the equipment room QR code and sign in with your official FLAME Google account to issue or return equipment.
+                Sign in with your verified FLAME University Google ID to issue or return sports equipment.
               </p>
             </div>
 
@@ -153,7 +136,7 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* PRIMARY ACTION: Sign In with Google */}
+            {/* ONLY Primary Action: Sign In with Google */}
             <div className="space-y-3 pt-2">
               <button
                 type="button"
@@ -182,79 +165,17 @@ export default function HomePage() {
                 </svg>
                 {isAuthenticating
                   ? "Connecting to Google..."
-                  : "Sign In with Google (@flame.edu.in)"}
+                  : "Login with your FLAME Email ID"}
               </button>
 
-              <div className="flex items-center justify-center gap-2 pt-1 text-[11px] text-slate-400">
+              <div className="flex items-center justify-center gap-2 pt-2 text-[11px] text-slate-400">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Restricted strictly to @flame.edu.in domain</span>
+                <span>Restricted strictly to official @flame.edu.in accounts</span>
               </div>
-            </div>
-
-            {/* Or Sign in directly by typing email */}
-            <div className="pt-2">
-              {!showManualEmail ? (
-                <button
-                  type="button"
-                  onClick={() => setShowManualEmail(true)}
-                  className="text-xs text-slate-500 hover:text-slate-800 underline transition"
-                >
-                  Or enter your FLAME Email ID manually
-                </button>
-              ) : (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (inputEmail) handleDirectLogin(inputEmail);
-                  }}
-                  className="space-y-2 pt-2 text-left animate-in fade-in duration-150"
-                >
-                  <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5" /> Enter your official FLAME Email ID
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      required
-                      placeholder="name.surname@flame.edu.in"
-                      value={inputEmail}
-                      onChange={(e) => setInputEmail(e.target.value)}
-                      className="flex-1 text-xs p-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-800 font-mono"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputEmail || isAuthenticating}
-                      className="px-4 py-3 bg-[#0B2545] hover:bg-[#133966] text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shrink-0"
-                    >
-                      Login <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-
-            {/* Quick Administrator Access */}
-            <div className="pt-4 border-t border-slate-100 text-left">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                Sports Department Administrator
-              </span>
-              <button
-                type="button"
-                onClick={() => handleDirectLogin("asmi.malushte@flame.edu.in", "Asmi Malushte")}
-                className="w-full p-3 rounded-xl border border-slate-200 hover:border-red-600 hover:bg-red-50/50 text-xs text-left transition flex items-center justify-between"
-              >
-                <div>
-                  <span className="font-bold text-slate-900 block">Asmi Malushte</span>
-                  <span className="text-[10px] text-red-700 font-semibold uppercase">
-                    Administrator Access
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-400 font-mono">asmi.malushte@flame.edu.in</span>
-              </button>
             </div>
           </div>
         ) : currentUser.role === "admin" ? (
-          /* Role: Administrator Dashboard */
+          /* Role: Administrator Dashboard (only granted by backend if verified email is asmi.malushte@flame.edu.in) */
           <AdminDashboard adminUser={currentUser} />
         ) : (
           /* Role: Student Dashboard */
