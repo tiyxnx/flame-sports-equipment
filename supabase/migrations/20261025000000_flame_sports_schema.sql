@@ -1,6 +1,7 @@
 -- ====================================================================
 -- FLAME University — Digital Sports Equipment Room
 -- Production PostgreSQL Database Schema & Row Level Security (RLS)
+-- Safe to run and re-run (idempotent)
 -- ====================================================================
 
 -- 1. Enable UUID Extension
@@ -101,7 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_issues_user_id ON public.equipment_issues(user_id
 CREATE INDEX IF NOT EXISTS idx_issues_status ON public.equipment_issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_due_timestamp ON public.equipment_issues(due_timestamp);
 
--- 7. Return Verification Events (Audit of Physical Receipt / Not Returned checks)
+-- 7. Return Verification Events
 CREATE TABLE IF NOT EXISTS public.return_verification_events (
     id TEXT PRIMARY KEY,
     issue_id TEXT NOT NULL REFERENCES public.equipment_issues(id) ON DELETE RESTRICT,
@@ -166,7 +167,7 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 );
 
 -- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- ROW LEVEL SECURITY (RLS) POLICIES (with DROP IF EXISTS to avoid errors)
 -- ====================================================================
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sports ENABLE ROW LEVEL SECURITY;
@@ -178,33 +179,81 @@ ALTER TABLE public.damage_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Public can read sports, equipment types, and available inventory
+-- 1. Sports Policies
+DROP POLICY IF EXISTS "Anyone can view active sports" ON public.sports;
 CREATE POLICY "Anyone can view active sports" ON public.sports FOR SELECT USING (is_active = true);
+
+-- 2. Equipment Types Policies
+DROP POLICY IF EXISTS "Anyone can view active equipment types" ON public.equipment_types;
 CREATE POLICY "Anyone can view active equipment types" ON public.equipment_types FOR SELECT USING (is_active = true);
+
+-- 3. Inventory Policies
+DROP POLICY IF EXISTS "Anyone can view inventory items" ON public.inventory_items;
 CREATE POLICY "Anyone can view inventory items" ON public.inventory_items FOR SELECT USING (true);
 
--- Students can read their own issues
+-- 4. Equipment Issues Policies
+DROP POLICY IF EXISTS "Students can view their own issues" ON public.equipment_issues;
 CREATE POLICY "Students can view their own issues" ON public.equipment_issues
 FOR SELECT USING (auth.jwt() ->> 'email' = user_email);
 
--- Admins can view and manage all tables
+-- 5. Admin Full Access Policies
+DROP POLICY IF EXISTS "Admins full access users" ON public.users;
 CREATE POLICY "Admins full access users" ON public.users FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access issues" ON public.equipment_issues;
 CREATE POLICY "Admins full access issues" ON public.equipment_issues FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access inventory" ON public.inventory_items;
 CREATE POLICY "Admins full access inventory" ON public.inventory_items FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access verifications" ON public.return_verification_events;
 CREATE POLICY "Admins full access verifications" ON public.return_verification_events FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access damages" ON public.damage_reports;
 CREATE POLICY "Admins full access damages" ON public.damage_reports FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access notifications" ON public.notification_logs;
 CREATE POLICY "Admins full access notifications" ON public.notification_logs FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
+DROP POLICY IF EXISTS "Admins full access audits" ON public.audit_logs;
 CREATE POLICY "Admins full access audits" ON public.audit_logs FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
+
+-- ====================================================================
+-- INITIAL SPORTS & EQUIPMENT SEED DATA
+-- ====================================================================
+INSERT INTO public.sports (id, name, is_active) VALUES
+    ('s-badminton', 'Badminton', true),
+    ('s-cricket', 'Cricket', true),
+    ('s-football', 'Football', true),
+    ('s-basketball', 'Basketball', true),
+    ('s-volleyball', 'Volleyball', true),
+    ('s-tennis', 'Tennis', true),
+    ('s-pickleball', 'Pickleball', true),
+    ('s-padel', 'Padel', true),
+    ('s-squash', 'Squash', true),
+    ('s-table-tennis', 'Table Tennis', true),
+    ('s-throwball', 'Throwball', true)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.equipment_types (id, sport_id, name, is_active) VALUES
+    ('eq-badminton-racket', 's-badminton', 'Racket', true),
+    ('eq-cricket-bat', 's-cricket', 'English Willow Bat', true),
+    ('eq-cricket-ball', 's-cricket', 'Leather Match Ball', true),
+    ('eq-cricket-stumps', 's-cricket', 'Stumps Set', true),
+    ('eq-football-ball', 's-football', 'Match Football (Size 5)', true),
+    ('eq-basketball-ball', 's-basketball', 'Composite Basketball (Size 7)', true),
+    ('eq-volleyball-ball', 's-volleyball', 'Match Volleyball', true),
+    ('eq-tennis-racket', 's-tennis', 'Graphite Tennis Racket', true),
+    ('eq-pickleball-paddle', 's-pickleball', 'Pickleball Paddle', true),
+    ('eq-padel-racket', 's-padel', 'Carbon Padel Racket', true),
+    ('eq-squash-racket', 's-squash', 'Squash Racket', true),
+    ('eq-tt-paddle', 's-table-tennis', 'Table Tennis Paddle', true),
+    ('eq-throwball-ball', 's-throwball', 'Match Throwball', true)
+ON CONFLICT (id) DO NOTHING;
