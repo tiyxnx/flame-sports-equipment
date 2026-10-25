@@ -90,12 +90,10 @@ CREATE TABLE IF NOT EXISTS public.equipment_issues (
 );
 ALTER TABLE public.equipment_issues ENABLE ROW LEVEL SECURITY;
 
--- CRITICAL RULE 1: Exactly ONE active issue per student at any time!
 CREATE UNIQUE INDEX IF NOT EXISTS unique_active_issue_per_student
 ON public.equipment_issues (user_id)
 WHERE status IN ('issued', 'return_submitted', 'overdue', 'not_returned');
 
--- CRITICAL RULE 2: Exactly ONE active issue per inventory item at any time!
 CREATE UNIQUE INDEX IF NOT EXISTS unique_active_issue_per_item
 ON public.equipment_issues (inventory_item_id)
 WHERE status IN ('issued', 'return_submitted', 'overdue', 'not_returned');
@@ -172,28 +170,20 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 );
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
--- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- ====================================================================
-
--- 1. Sports Policies
+-- 11. Row Level Security Policies
 DROP POLICY IF EXISTS "Anyone can view active sports" ON public.sports;
 CREATE POLICY "Anyone can view active sports" ON public.sports FOR SELECT USING (is_active = true);
 
--- 2. Equipment Types Policies
 DROP POLICY IF EXISTS "Anyone can view active equipment types" ON public.equipment_types;
 CREATE POLICY "Anyone can view active equipment types" ON public.equipment_types FOR SELECT USING (is_active = true);
 
--- 3. Inventory Policies
 DROP POLICY IF EXISTS "Anyone can view inventory items" ON public.inventory_items;
 CREATE POLICY "Anyone can view inventory items" ON public.inventory_items FOR SELECT USING (true);
 
--- 4. Equipment Issues Policies
 DROP POLICY IF EXISTS "Students can view their own issues" ON public.equipment_issues;
 CREATE POLICY "Students can view their own issues" ON public.equipment_issues
 FOR SELECT USING (auth.jwt() ->> 'email' = user_email);
 
--- 5. Admin Full Access Policies
 DROP POLICY IF EXISTS "Admins full access users" ON public.users;
 CREATE POLICY "Admins full access users" ON public.users FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
@@ -222,9 +212,7 @@ DROP POLICY IF EXISTS "Admins full access audits" ON public.audit_logs;
 CREATE POLICY "Admins full access audits" ON public.audit_logs FOR ALL
 USING (auth.jwt() ->> 'email' = 'asmi.malushte@flame.edu.in');
 
--- ====================================================================
--- INITIAL SPORTS & EQUIPMENT SEED DATA
--- ====================================================================
+-- 12. Initial Sports & Equipment Seed Data
 INSERT INTO public.sports (id, name, is_active) VALUES
     ('s-badminton', 'Badminton', true),
     ('s-cricket', 'Cricket', true),
@@ -253,4 +241,44 @@ INSERT INTO public.equipment_types (id, sport_id, name, is_active) VALUES
     ('eq-squash-racket', 's-squash', 'Squash Racket', true),
     ('eq-tt-paddle', 's-table-tennis', 'Table Tennis Paddle', true),
     ('eq-throwball-ball', 's-throwball', 'Match Throwball', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- 13. Seed Individual Physical Inventory Items
+INSERT INTO public.inventory_items (id, sport_id, equipment_type_id, equipment_number, status) VALUES
+    ('item-s-badminton-rkt-1', 's-badminton', 'eq-badminton-racket', '#1', 'available'),
+    ('item-s-badminton-rkt-2', 's-badminton', 'eq-badminton-racket', '#2', 'available'),
+    ('item-s-badminton-rkt-3', 's-badminton', 'eq-badminton-racket', '#3', 'available'),
+    ('item-s-badminton-rkt-4', 's-badminton', 'eq-badminton-racket', '#4', 'available'),
+    ('item-s-badminton-rkt-5', 's-badminton', 'eq-badminton-racket', '#5', 'available'),
+    ('item-s-badminton-rkt-6', 's-badminton', 'eq-badminton-racket', '#6', 'available'),
+    ('item-s-badminton-rkt-7', 's-badminton', 'eq-badminton-racket', '#7', 'available'),
+    ('item-s-badminton-rkt-8', 's-badminton', 'eq-badminton-racket', '#8', 'available'),
+    ('item-s-badminton-rkt-9', 's-badminton', 'eq-badminton-racket', '#9', 'available'),
+    ('item-s-badminton-rkt-10', 's-badminton', 'eq-badminton-racket', '#10', 'available'),
+    ('item-s-badminton-rkt-11', 's-badminton', 'eq-badminton-racket', '#11', 'available'),
+    ('item-s-badminton-rkt-12', 's-badminton', 'eq-badminton-racket', '#12', 'available'),
+    ('item-s-cricket-bat-1', 's-cricket', 'eq-cricket-bat', '#1', 'available'),
+    ('item-s-cricket-bat-2', 's-cricket', 'eq-cricket-bat', '#2', 'available'),
+    ('item-s-cricket-bat-3', 's-cricket', 'eq-cricket-bat', '#3', 'available'),
+    ('item-s-cricket-bat-4', 's-cricket', 'eq-cricket-bat', '#4', 'available'),
+    ('item-s-football-ball-1', 's-football', 'eq-football-ball', '#1', 'available'),
+    ('item-s-football-ball-2', 's-football', 'eq-football-ball', '#2', 'available'),
+    ('item-s-football-ball-3', 's-football', 'eq-football-ball', '#3', 'available'),
+    ('item-s-football-ball-4', 's-football', 'eq-football-ball', '#4', 'available'),
+    ('item-s-basketball-ball-1', 's-basketball', 'eq-basketball-ball', '#1', 'available'),
+    ('item-s-basketball-ball-2', 's-basketball', 'eq-basketball-ball', '#2', 'available'),
+    ('item-s-basketball-ball-3', 's-basketball', 'eq-basketball-ball', '#3', 'available'),
+    ('item-s-basketball-ball-4', 's-basketball', 'eq-basketball-ball', '#4', 'available'),
+    ('item-s-volleyball-ball-1', 's-volleyball', 'eq-volleyball-ball', '#1', 'available'),
+    ('item-s-volleyball-ball-2', 's-volleyball', 'eq-volleyball-ball', '#2', 'available'),
+    ('item-s-tennis-rkt-1', 's-tennis', 'eq-tennis-racket', '#1', 'available'),
+    ('item-s-tennis-rkt-2', 's-tennis', 'eq-tennis-racket', '#2', 'available'),
+    ('item-s-pickleball-pdl-1', 's-pickleball', 'eq-pickleball-paddle', '#1', 'available'),
+    ('item-s-pickleball-pdl-2', 's-pickleball', 'eq-pickleball-paddle', '#2', 'available'),
+    ('item-s-padel-rkt-1', 's-padel', 'eq-padel-racket', '#1', 'available'),
+    ('item-s-padel-rkt-2', 's-padel', 'eq-padel-racket', '#2', 'available'),
+    ('item-s-squash-rkt-1', 's-squash', 'eq-squash-racket', '#1', 'available'),
+    ('item-s-squash-rkt-2', 's-squash', 'eq-squash-racket', '#2', 'available'),
+    ('item-s-tt-pdl-1', 's-table-tennis', 'eq-tt-paddle', '#1', 'available'),
+    ('item-s-tt-pdl-2', 's-table-tennis', 'eq-tt-paddle', '#2', 'available')
 ON CONFLICT (id) DO NOTHING;
