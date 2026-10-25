@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+
+  /* FLAME University Brand Colors */
+  --flame-red: #c8102e;
+  --flame-red-hover: #a50d26;
+  --flame-red-dark: #800a1d;
+  --flame-red-soft: #fef2f2;
+  --flame-red-border: #fecaca;
+
+  --flame-navy: #0b2545;
+  --flame-navy-hover: #133966;
+  --flame-navy-dark: #061527;
+  --flame-navy-soft: #f0f4f9;
+  --flame-navy-border: #cbd5e1;
+
+  --flame-gold: #d97706;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@theme {
+  --color-flame-red: var(--flame-red);
+  --color-flame-red-hover: var(--flame-red-hover);
+  --color-flame-red-dark: var(--flame-red-dark);
+  --color-flame-red-soft: var(--flame-red-soft);
+  --color-flame-red-border: var(--flame-red-border);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-flame-navy: var(--flame-navy);
+  --color-flame-navy-hover: var(--flame-navy-hover);
+  --color-flame-navy-dark: var(--flame-navy-dark);
+  --color-flame-navy-soft: var(--flame-navy-soft);
+  --color-flame-navy-border: var(--flame-navy-border);
+
+  --color-flame-gold: var(--flame-gold);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbars for clean institutional look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
