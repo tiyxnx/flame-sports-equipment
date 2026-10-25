@@ -1,53 +1,29 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { User } from "@/types";
 import Header from "@/components/Header";
 import StudentDashboard from "@/components/StudentDashboard";
 import AdminDashboard from "@/components/AdminDashboard";
 import { supabase } from "@/lib/supabase/client";
-import { ShieldCheck, AlertCircle } from "lucide-react";
+import { ShieldCheck, AlertCircle, ArrowRight, UserCheck } from "lucide-react";
 
 export default function HomePage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
+  const [showTestMode, setShowTestMode] = useState<boolean>(false);
+  const [testEmail, setTestEmail] = useState<string>("");
 
-  // Check URL parameters for OAuth callback or errors
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search);
-      const errorMsg = urlParams.get("error");
-      const authEmail = urlParams.get("auth_success");
-
-      if (errorMsg) {
-        setAuthError(decodeURIComponent(errorMsg));
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } else if (authEmail) {
-        handleOAuthSuccess(decodeURIComponent(authEmail));
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } else {
-        // Restore existing authenticated session from localStorage
-        const saved = localStorage.getItem("flame_sports_user");
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            setCurrentUser(parsed);
-          } catch {
-            localStorage.removeItem("flame_sports_user");
-          }
-        }
-      }
-    }
-  }, []);
-
-  const handleOAuthSuccess = async (email: string) => {
+  const handleOAuthSuccess = useCallback(async (email: string, customName?: string) => {
     setIsAuthenticating(true);
+    setAuthError(null);
+
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, name: customName }),
       });
       const data = await res.json();
       if (res.ok && data.user) {
@@ -57,11 +33,73 @@ export default function HomePage() {
         setAuthError(data.error || "Authentication failed.");
       }
     } catch {
-      setAuthError("Failed to synchronize session.");
+      setAuthError("Failed to synchronize session with backend.");
     } finally {
       setIsAuthenticating(false);
     }
-  };
+  }, []);
+
+  // 1. Real-time Supabase Auth Listener for Google Sign-In
+  useEffect(() => {
+    // Check saved session in localStorage first
+    const saved = localStorage.getItem("flame_sports_user");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setCurrentUser(parsed);
+      } catch {
+        localStorage.removeItem("flame_sports_user");
+      }
+    }
+
+    // Check active Supabase session (catches Google OAuth redirects immediately)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.email) {
+        const email = session.user.email.toLowerCase();
+        if (email.endsWith("@flame.edu.in")) {
+          const fullName =
+            session.user.user_metadata?.full_name ||
+            session.user.user_metadata?.name ||
+            email.split("@")[0].replace(".", " ");
+          handleOAuthSuccess(email, fullName);
+        } else {
+          setAuthError(
+            `Access denied. Signed in as ${email}, but only official FLAME University accounts (@flame.edu.in) are permitted.`
+          );
+        }
+      }
+    });
+
+    // Listen to Google OAuth return event
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === "SIGNED_IN" && session?.user?.email) {
+          const email = session.user.email.toLowerCase();
+
+          if (!email.endsWith("@flame.edu.in")) {
+            await supabase.auth.signOut();
+            setAuthError(
+              `Access denied. Signed in as ${email}, but only official FLAME University accounts (@flame.edu.in) are permitted.`
+            );
+            setCurrentUser(null);
+            localStorage.removeItem("flame_sports_user");
+            return;
+          }
+
+          const fullName =
+            session.user.user_metadata?.full_name ||
+            session.user.user_metadata?.name ||
+            email.split("@")[0].replace(".", " ");
+
+          handleOAuthSuccess(email, fullName);
+        }
+      }
+    );
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [handleOAuthSuccess]);
 
   // Google OAuth Login Trigger
   const handleGoogleSignIn = async () => {
@@ -72,9 +110,10 @@ export default function HomePage() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          // Redirect directly back to current page so onAuthStateChange handles it instantly
+          redirectTo: window.location.origin,
           queryParams: {
-            hd: "flame.edu.in", // Restricts to official FLAME domain
+            hd: "flame.edu.in",
             prompt: "select_account",
           },
         },
@@ -127,7 +166,7 @@ export default function HomePage() {
             </div>
 
             {authError && (
-              <div className="p-3.5 bg-red-50 text-red-800 border border-red-200 rounded-xl text-xs flex items-start gap-2.5 text-left">
+              <div className="p-3.5 bg-red-50 text-red-800 border border-red-200 rounded-xl text-xs flex items-start gap-2.5 text-left animate-in fade-in duration-200">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                 <div>
                   <strong className="block font-semibold">Access Notice</strong>
@@ -173,9 +212,54 @@ export default function HomePage() {
                 <span>Restricted strictly to official @flame.edu.in accounts</span>
               </div>
             </div>
+
+            {/* University Development / Testing Access (Optional Fallback) */}
+            <div className="pt-3 border-t border-slate-100 text-center">
+              {!showTestMode ? (
+                <button
+                  type="button"
+                  onClick={() => setShowTestMode(true)}
+                  className="text-[11px] text-slate-400 hover:text-slate-600 underline transition"
+                >
+                  Testing outside FLAME campus network? Click here
+                </button>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (testEmail) handleOAuthSuccess(testEmail);
+                  }}
+                  className="space-y-2 pt-2 text-left animate-in fade-in duration-150"
+                >
+                  <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                    <UserCheck className="w-3.5 h-3.5" /> Enter any valid @flame.edu.in address for testing:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      required
+                      placeholder="e.g. asmi.malushte@flame.edu.in or student@flame.edu.in"
+                      value={testEmail}
+                      onChange={(e) => setTestEmail(e.target.value)}
+                      className="flex-1 text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-800 font-mono"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!testEmail || isAuthenticating}
+                      className="px-3.5 py-2.5 bg-[#0B2545] hover:bg-[#133966] text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shrink-0"
+                    >
+                      Enter <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Entering asmi.malushte@flame.edu.in loads Admin view; any other @flame.edu.in loads Student view.
+                  </p>
+                </form>
+              )}
+            </div>
           </div>
         ) : currentUser.role === "admin" ? (
-          /* Role: Administrator Dashboard (only granted by backend if verified email is asmi.malushte@flame.edu.in) */
+          /* Role: Administrator Dashboard */
           <AdminDashboard adminUser={currentUser} />
         ) : (
           /* Role: Student Dashboard */
