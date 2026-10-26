@@ -782,8 +782,8 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Student</th>
                   <th className="py-3 px-4">Equipment</th>
-                  <th className="py-3 px-4">Issued At</th>
-                  <th className="py-3 px-4">Deadline</th>
+                  <th className="py-3 px-4">Issued At (Got)</th>
+                  <th className="py-3 px-4">Return Time / Deadline</th>
                   <th className="py-3 px-4">Lifecycle Status</th>
                   <th className="py-3 px-4 text-center bg-slate-100/70 border-l border-slate-200">
                     Mandatory Administrative Actions
@@ -830,15 +830,32 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
 
                         {/* Issued At */}
                         <td className="py-3.5 px-4 text-slate-600">
-                          {formatIstDate(iss.issue_timestamp)}
-                          <span className="block text-[11px] text-slate-400">
+                          <span className="font-semibold text-slate-800">{formatIstDate(iss.issue_timestamp)}</span>
+                          <span className="block text-[11px] text-slate-500 font-mono">
                             {formatIstTime(iss.issue_timestamp)}
                           </span>
                         </td>
 
-                        {/* Deadline */}
-                        <td className="py-3.5 px-4 font-semibold text-slate-700">
-                          11:00 PM IST
+                        {/* Return Time or Deadline */}
+                        <td className="py-3.5 px-4">
+                          {iss.physical_returned_at ? (
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-emerald-700 block">Returned:</span>
+                              <span className="font-semibold text-emerald-800">{formatIstDate(iss.physical_returned_at)}</span>
+                              <span className="block text-[11px] text-emerald-600 font-mono">{formatIstTime(iss.physical_returned_at)}</span>
+                            </div>
+                          ) : iss.return_submitted_at ? (
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-blue-700 block">Submitted:</span>
+                              <span className="font-semibold text-blue-800">{formatIstDate(iss.return_submitted_at)}</span>
+                              <span className="block text-[11px] text-blue-600 font-mono">{formatIstTime(iss.return_submitted_at)}</span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">Deadline:</span>
+                              <span className="font-semibold text-slate-700">11:00 PM IST Today</span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Status */}

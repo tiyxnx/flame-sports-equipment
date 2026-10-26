@@ -10,7 +10,7 @@ interface ReturnModalProps {
   user: User;
   activeIssue: EquipmentIssue;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (updatedIssue?: EquipmentIssue) => void;
 }
 
 export default function ReturnModal({ user, activeIssue, onClose, onSuccess }: ReturnModalProps) {
@@ -23,6 +23,7 @@ export default function ReturnModal({ user, activeIssue, onClose, onSuccess }: R
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmitReturn = async () => {
+    if (loading) return;
     if (!acknowledgement) {
       setError("Please check the mandatory return acknowledgement box before submitting.");
       return;
@@ -60,7 +61,7 @@ export default function ReturnModal({ user, activeIssue, onClose, onSuccess }: R
         return;
       }
 
-      onSuccess();
+      onSuccess(data.issue);
     } catch {
       setError("A network error occurred while submitting your return.");
       setLoading(false);

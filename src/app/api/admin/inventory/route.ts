@@ -57,7 +57,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
-    const result = dbStore.updateInventoryItemStatus(
+    const result = await dbStore.updateInventoryItemStatus(
       itemId,
       status as InventoryItemStatus,
       admin_id,

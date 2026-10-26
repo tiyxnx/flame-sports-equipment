@@ -1,14 +1,14 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Sport, EquipmentType, InventoryItem, User } from "@/types";
+import { Sport, EquipmentType, InventoryItem, User, EquipmentIssue } from "@/types";
 import { getLiabilityDisclaimer } from "@/lib/date-utils";
 import { X, ChevronRight, Check, AlertTriangle, ShieldCheck, ArrowLeft } from "lucide-react";
 
 interface IssueModalProps {
   user: User;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (newIssue?: EquipmentIssue) => void;
 }
 
 export default function IssueModal({ user, onClose, onSuccess }: IssueModalProps) {
@@ -88,6 +88,7 @@ export default function IssueModal({ user, onClose, onSuccess }: IssueModalProps
   };
 
   const handleSubmitIssue = async () => {
+    if (loading) return;
     if (!selectedItem) {
       setError("Please select an equipment item.");
       return;
@@ -121,7 +122,7 @@ export default function IssueModal({ user, onClose, onSuccess }: IssueModalProps
         return;
       }
 
-      onSuccess();
+      onSuccess(data.issue);
     } catch {
       setError("An unexpected network error occurred while submitting your request.");
       setLoading(false);

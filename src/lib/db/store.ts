@@ -136,7 +136,13 @@ class HybridDataStore {
       const userId = cleanEmail === "asmi.malushte@flame.edu.in"
         ? ADMIN_UUID
         : cleanEmail === "tiyana.shah@flame.edu.in"
-        ? "00000000-0000-0000-0000-000000000002"
+        ? "a16f8cf2-c469-4d99-90ad-4fde3a783b02"
+        : cleanEmail === "rohan.joshi@flame.edu.in"
+        ? "9c2d49fc-b415-4096-90b1-2a419299a20c"
+        : cleanEmail === "priya.nair@flame.edu.in"
+        ? "e9513aa4-f6a4-4b5c-81bc-f65ace0fb77a"
+        : cleanEmail === "meenakshi.sv@flame.edu.in"
+        ? "4c2a403c-27b3-4e1a-9944-7dedf06e51c0"
         : crypto.randomUUID();
       const newUser: User = {
         id: userId,
@@ -180,6 +186,67 @@ class HybridDataStore {
     }
 
     return { user: existingUser };
+  }
+
+  public async authenticateUserAsync(email: string, name?: string): Promise<{ user: User; error?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail.endsWith(FLAME_DOMAIN)) {
+      return {
+        user: null as unknown as User,
+        error: `Access restricted. Only verified FLAME University accounts (${FLAME_DOMAIN}) are permitted.`,
+      };
+    }
+
+    const isAdmin = isAdminEmail(cleanEmail);
+    const role = isAdmin ? "admin" : "student";
+    const now = new Date().toISOString();
+
+    // Check Supabase first for absolute database consistency
+    try {
+      const { data: suUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
+
+      if (suUser) {
+        const updatedRole = isAdmin ? "admin" : suUser.role;
+        const user: User = {
+          ...suUser,
+          role: updatedRole as "admin" | "student",
+          last_login_at: now,
+        };
+        this.users.set(user.id, user);
+
+        await supabase
+          .from("users")
+          .update({ role: updatedRole, last_login_at: now })
+          .eq("id", user.id);
+
+        return { user };
+      }
+    } catch (e) {
+      console.error("Supabase user lookup error in authenticateUserAsync:", e);
+    }
+
+    // If not in Supabase yet, create new record
+    const baseAuth = this.authenticateUser(cleanEmail, name);
+    if (baseAuth.user) {
+      try {
+        await supabase.from("users").upsert({
+          id: baseAuth.user.id,
+          email: baseAuth.user.email,
+          name: baseAuth.user.name,
+          role: baseAuth.user.role,
+          created_at: baseAuth.user.created_at,
+          last_login_at: baseAuth.user.last_login_at,
+        });
+      } catch (e) {
+        console.error("Supabase upsert error in authenticateUserAsync:", e);
+      }
+    }
+
+    return baseAuth;
   }
 
   public getUserById(id: string): User | undefined {
@@ -371,12 +438,12 @@ class HybridDataStore {
     return { item: newItem };
   }
 
-  public updateInventoryItemStatus(
+  public async updateInventoryItemStatus(
     itemId: string,
     status: InventoryItemStatus,
     adminId: string,
     notes?: string
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const item = this.inventory.get(itemId);
     if (!item) return { success: false, error: "Inventory item not found." };
 
@@ -393,24 +460,28 @@ class HybridDataStore {
           dmg.resolution_status = "resolved";
           dmg.resolution_notes = notes || "Cleared and restored to available by administrator.";
           this.damageReports.set(dmg.id, dmg);
-          safeRun(
-            supabase.from("damage_reports").update({
+          try {
+            await supabase.from("damage_reports").update({
               resolution_status: "resolved",
               resolution_notes: dmg.resolution_notes,
-            }).eq("id", dmg.id)
-          );
+            }).eq("id", dmg.id);
+          } catch (e) {
+            console.error("Supabase damage report update error:", e);
+          }
         }
       }
     }
 
-    safeRun(
-      supabase
+    try {
+      await supabase
         .from("inventory_items")
         .update({ status, updated_at: now, notes })
-        .eq("id", itemId)
-    );
+        .eq("id", itemId);
+    } catch (e) {
+      console.error("Supabase inventory status update error:", e);
+    }
 
-    this.logAudit(adminId, ADMIN_EMAIL, "INVENTORY_STATUS_CHANGED", itemId, "inventory_item", {
+    await this.logAuditAsync(adminId, ADMIN_EMAIL, "INVENTORY_STATUS_CHANGED", itemId, "inventory_item", {
       from: oldStatus,
       to: status,
       notes,
@@ -463,14 +534,14 @@ class HybridDataStore {
       user = this.getUserByEmail(cleanEmail);
     }
     if (!user && cleanEmail.endsWith(FLAME_DOMAIN)) {
-      const authRes = this.authenticateUser(cleanEmail, params.userName);
+      const authRes = await this.authenticateUserAsync(cleanEmail, params.userName);
       user = authRes.user;
     }
     if (!user && params.userId) {
       try {
         const { data: su } = await supabase.from("users").select("*").eq("id", params.userId).maybeSingle();
         if (su && su.email.toLowerCase().endsWith(FLAME_DOMAIN)) {
-          user = this.authenticateUser(su.email, su.name).user;
+          user = (await this.authenticateUserAsync(su.email, su.name)).user;
         }
       } catch {}
     }
@@ -478,7 +549,40 @@ class HybridDataStore {
       return { error: "User not found or unauthenticated." };
     }
 
-    // Enforce 1 active issue rule
+    // Ensure user exists in Supabase users table and ID strictly matches PostgreSQL
+    try {
+      const { data: suUser } = await supabase
+        .from("users")
+        .select("id, email, name, role")
+        .eq("email", user.email.toLowerCase())
+        .maybeSingle();
+
+      if (suUser) {
+        if (user.id !== suUser.id) {
+          this.users.delete(user.id);
+          user.id = suUser.id;
+          user.role = suUser.role as "admin" | "student";
+          this.users.set(user.id, user);
+        }
+      } else {
+        // Guarantee user exists before referencing as foreign key
+        const { error: upsertErr } = await supabase.from("users").upsert({
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          created_at: user.created_at,
+          last_login_at: user.last_login_at,
+        });
+        if (upsertErr) {
+          console.error("Supabase user upsert error in issueEquipment:", upsertErr);
+        }
+      }
+    } catch (e) {
+      console.error("Supabase user sync error in issueEquipment:", e);
+    }
+
+    // Enforce 1 active issue rule (check both database & local memory)
     const activeIssue = await this.getActiveIssueForUser(user.id, user.email);
     if (activeIssue) {
       return {
@@ -487,8 +591,41 @@ class HybridDataStore {
     }
 
     // Enforce availability
-    const item = this.inventory.get(params.inventoryItemId);
+    let item = this.inventory.get(params.inventoryItemId);
+    if (!item) {
+      try {
+        const { data: suItem } = await supabase
+          .from("inventory_items")
+          .select("*")
+          .eq("id", params.inventoryItemId)
+          .maybeSingle();
+        if (suItem) {
+          const sport = this.sports.get(suItem.sport_id);
+          const eqType = this.equipmentTypes.get(suItem.equipment_type_id);
+          const enriched: InventoryItem = {
+            ...suItem,
+            sport_name: sport?.name || suItem.sport_name || "",
+            equipment_type_name: eqType?.name || suItem.equipment_type_name || "",
+          };
+          this.inventory.set(enriched.id, enriched);
+          item = enriched;
+        }
+      } catch {}
+    }
     if (!item) return { error: "Selected inventory item does not exist." };
+
+    // Check database directly for active issues on this physical item
+    try {
+      const { data: itemIssues } = await supabase
+        .from("equipment_issues")
+        .select("id, status, user_name, equipment_number")
+        .eq("inventory_item_id", item.id)
+        .in("status", ["issued", "return_submitted", "overdue", "not_returned"]);
+
+      if (itemIssues && itemIssues.length > 0) {
+        return { error: `Selected item #${item.equipment_number} is currently in use and cannot be issued.` };
+      }
+    } catch {}
 
     const isItemAlreadyIssued = Array.from(this.issues.values()).some(
       (iss) =>
@@ -496,7 +633,7 @@ class HybridDataStore {
         ["issued", "return_submitted", "overdue", "not_returned"].includes(iss.status)
     );
     if (isItemAlreadyIssued || item.status !== "available") {
-      return { error: `Selected item is currently in use or unavailable and cannot be issued.` };
+      return { error: `Selected item #${item.equipment_number} is currently in use or unavailable.` };
     }
 
     const now = new Date();
@@ -526,27 +663,42 @@ class HybridDataStore {
       updated_at: nowIso,
     };
 
+    // 1. Insert into Supabase equipment_issues with strict error verification
+    const { error: insertErr } = await supabase.from("equipment_issues").insert(newIssue);
+    if (insertErr) {
+      console.error("Supabase insert error on equipment issue:", insertErr);
+      if (insertErr.code === "23505") {
+        return {
+          error: "Active equipment issue detected. You already have an active equipment issue in the system.",
+        };
+      }
+      return {
+        error: `Database save failed: ${insertErr.message}`,
+      };
+    }
+
+    // 2. Update inventory in Supabase
+    await supabase
+      .from("inventory_items")
+      .update({ status: "issued", updated_at: nowIso })
+      .eq("id", item.id);
+
+    // 3. Update memory state
     item.status = "issued";
     item.updated_at = nowIso;
     this.issues.set(newIssue.id, newIssue);
     this.inventory.set(item.id, item);
 
-    try {
-      await Promise.all([
-        supabase.from("equipment_issues").insert(newIssue),
-        supabase.from("inventory_items").update({ status: "issued", updated_at: nowIso }).eq("id", item.id),
-      ]);
-    } catch (e) {
-      console.error("Supabase sync error on issue:", e);
-    }
-
-    this.logAudit(user.id, user.email, "EQUIPMENT_ISSUED", newIssue.id, "equipment_issue", {
+    // 4. Record Audit Log in memory & database
+    await this.logAuditAsync(user.id, user.email, "EQUIPMENT_ISSUED", newIssue.id, "equipment_issue", {
       sport: newIssue.sport_name,
       equipment: newIssue.equipment_type_name,
       number: newIssue.equipment_number,
-      due: dueTimestamp,
+      issueTimestamp: nowIso,
+      dueTimestamp: dueTimestamp,
     });
 
+    // 5. Send Email Confirmation
     const emailLog = await sendEmailNotification({
       type: "issue_confirmation",
       recipientEmail: user.email,
@@ -558,7 +710,6 @@ class HybridDataStore {
       issueTimestamp: nowIso,
     });
     this.notificationLogs.set(emailLog.id, emailLog);
-
     safeRun(supabase.from("notification_logs").insert(emailLog));
 
     return { issue: newIssue };
@@ -595,7 +746,7 @@ class HybridDataStore {
       user = this.getUserByEmail(cleanEmail);
     }
     if (!user && cleanEmail.endsWith(FLAME_DOMAIN)) {
-      const authRes = this.authenticateUser(cleanEmail);
+      const authRes = await this.authenticateUserAsync(cleanEmail);
       user = authRes.user;
     }
     // If not found yet, but this issue belongs to this user ID or email:
@@ -611,7 +762,7 @@ class HybridDataStore {
       try {
         const { data: su } = await supabase.from("users").select("*").eq("id", params.userId).maybeSingle();
         if (su && su.email.toLowerCase().endsWith(FLAME_DOMAIN)) {
-          user = this.authenticateUser(su.email, su.name).user;
+          user = (await this.authenticateUserAsync(su.email, su.name)).user;
         }
       } catch {}
     }
@@ -643,8 +794,31 @@ class HybridDataStore {
       issue.damage_description = params.damageDescription || "Reported by student during return.";
     }
 
-    this.issues.set(issue.id, issue);
+    // 1. Update issue in Supabase with verification
+    const { error: returnErr } = await supabase.from("equipment_issues").update({
+      return_submitted_at: issue.return_submitted_at,
+      return_acknowledgement: true,
+      return_photo_url: issue.return_photo_url,
+      student_notes: issue.student_notes,
+      status: "return_submitted",
+      damage_reported: issue.damage_reported,
+      damage_description: issue.damage_description,
+      updated_at: now,
+    }).eq("id", issue.id);
 
+    if (returnErr) {
+      console.error("Supabase submitReturn update error:", returnErr);
+      return { error: `Database save failed: ${returnErr.message}` };
+    }
+
+    // 2. Update inventory status
+    await supabase.from("inventory_items").update({
+      status: "return_submitted",
+      updated_at: now,
+    }).eq("id", issue.inventory_item_id);
+
+    // 3. Update memory
+    this.issues.set(issue.id, issue);
     const item = this.inventory.get(issue.inventory_item_id);
     if (item) {
       item.status = "return_submitted";
@@ -652,30 +826,13 @@ class HybridDataStore {
       this.inventory.set(item.id, item);
     }
 
-    safeRun(
-      supabase.from("equipment_issues").update({
-        return_submitted_at: issue.return_submitted_at,
-        return_acknowledgement: true,
-        return_photo_url: issue.return_photo_url,
-        student_notes: issue.student_notes,
-        status: "return_submitted",
-        damage_reported: issue.damage_reported,
-        damage_description: issue.damage_description,
-        updated_at: now,
-      }).eq("id", issue.id)
-    );
-
-    safeRun(
-      supabase.from("inventory_items").update({
-        status: "return_submitted",
-        updated_at: now,
-      }).eq("id", issue.inventory_item_id)
-    );
-
-    this.logAudit(user.id, user.email, "RETURN_SUBMITTED", issue.id, "equipment_issue", {
+    // 4. Record Audit Log in database & memory
+    await this.logAuditAsync(user.id, user.email, "RETURN_SUBMITTED", issue.id, "equipment_issue", {
       sport: issue.sport_name,
       equipment: issue.equipment_type_name,
       number: issue.equipment_number,
+      issueTimestamp: issue.issue_timestamp,
+      returnSubmittedTimestamp: now,
       hasPhoto: Boolean(params.photoUrl),
       damageReported: Boolean(params.damageReported),
     });
@@ -693,24 +850,32 @@ class HybridDataStore {
       damageDescription: params.damageDescription,
     });
     this.notificationLogs.set(emailLog.id, emailLog);
-
     safeRun(supabase.from("notification_logs").insert(emailLog));
 
     return { issue };
   }
 
   // --- Admin Action 1: Confirm Return ---
-  public confirmPhysicalReturn(params: {
+  public async confirmPhysicalReturn(params: {
     issueId: string;
     adminId: string;
     notes?: string;
-  }): { issue?: EquipmentIssue; error?: string } {
+  }): Promise<{ issue?: EquipmentIssue; error?: string }> {
     const admin = this.users.get(params.adminId) || this.getUserByEmail(ADMIN_EMAIL);
     if (!admin || admin.role !== "admin") {
       return { error: "Unauthorized: Administrator privileges required." };
     }
 
-    const issue = this.issues.get(params.issueId);
+    let issue = this.issues.get(params.issueId);
+    if (!issue) {
+      try {
+        const { data } = await supabase.from("equipment_issues").select("*").eq("id", params.issueId).maybeSingle();
+        if (data) {
+          issue = data as EquipmentIssue;
+          this.issues.set(issue.id, issue);
+        }
+      } catch {}
+    }
     if (!issue) return { error: "Issue record not found." };
 
     if (issue.status === "returned") {
@@ -724,15 +889,35 @@ class HybridDataStore {
     issue.confirmed_by_admin_email = admin.email;
     issue.admin_notes = params.notes || null;
     issue.updated_at = now;
-    this.issues.set(issue.id, issue);
 
+    // 1. Update Supabase equipment_issues
+    const { error: confirmErr } = await supabase.from("equipment_issues").update({
+      status: "returned",
+      physical_returned_at: now,
+      confirmed_by_admin_id: admin.id,
+      confirmed_by_admin_email: admin.email,
+      admin_notes: issue.admin_notes,
+      updated_at: now,
+    }).eq("id", issue.id);
+
+    if (confirmErr) {
+      console.error("Supabase confirmPhysicalReturn update error:", confirmErr);
+      return { error: `Database save failed: ${confirmErr.message}` };
+    }
+
+    // 2. Restore inventory item to available
     const item = this.inventory.get(issue.inventory_item_id);
     if (item && item.status !== "damaged" && item.status !== "missing" && item.status !== "retired") {
       item.status = "available";
       item.updated_at = now;
       this.inventory.set(item.id, item);
+      await supabase.from("inventory_items").update({
+        status: "available",
+        updated_at: now,
+      }).eq("id", issue.inventory_item_id);
     }
 
+    // 3. Verification event
     const eventId = `verif-${Date.now()}`;
     const verifEvent: ReturnVerificationEvent = {
       id: eventId,
@@ -746,32 +931,18 @@ class HybridDataStore {
       created_at: now,
     };
     this.verificationEvents.set(eventId, verifEvent);
+    await supabase.from("return_verification_events").insert(verifEvent);
 
-    safeRun(
-      supabase.from("equipment_issues").update({
-        status: "returned",
-        physical_returned_at: now,
-        confirmed_by_admin_id: admin.id,
-        confirmed_by_admin_email: admin.email,
-        admin_notes: issue.admin_notes,
-        updated_at: now,
-      }).eq("id", issue.id)
-    );
+    // 4. Update memory
+    this.issues.set(issue.id, issue);
 
-    if (item && item.status !== "damaged") {
-      safeRun(
-        supabase.from("inventory_items").update({
-          status: "available",
-          updated_at: now,
-        }).eq("id", issue.inventory_item_id)
-      );
-    }
-
-    safeRun(supabase.from("return_verification_events").insert(verifEvent));
-
-    this.logAudit(admin.id, admin.email, "PHYSICAL_RETURN_CONFIRMED", issue.id, "equipment_issue", {
+    // 5. Audit Log in Supabase & memory
+    await this.logAuditAsync(admin.id, admin.email, "PHYSICAL_RETURN_CONFIRMED", issue.id, "equipment_issue", {
       studentEmail: issue.user_email,
       equipment: `${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`,
+      issueTimestamp: issue.issue_timestamp,
+      returnSubmittedTimestamp: issue.return_submitted_at,
+      physicalReturnedTimestamp: now,
       notes: params.notes,
     });
 
@@ -779,17 +950,26 @@ class HybridDataStore {
   }
 
   // --- Admin Action 2: Not Returned ---
-  public markNotReturned(params: {
+  public async markNotReturned(params: {
     issueId: string;
     adminId: string;
     notes?: string;
-  }): { issue?: EquipmentIssue; error?: string } {
+  }): Promise<{ issue?: EquipmentIssue; error?: string }> {
     const admin = this.users.get(params.adminId) || this.getUserByEmail(ADMIN_EMAIL);
     if (!admin || admin.role !== "admin") {
       return { error: "Unauthorized: Administrator privileges required." };
     }
 
-    const issue = this.issues.get(params.issueId);
+    let issue = this.issues.get(params.issueId);
+    if (!issue) {
+      try {
+        const { data } = await supabase.from("equipment_issues").select("*").eq("id", params.issueId).maybeSingle();
+        if (data) {
+          issue = data as EquipmentIssue;
+          this.issues.set(issue.id, issue);
+        }
+      } catch {}
+    }
     if (!issue) return { error: "Issue record not found." };
 
     const now = new Date().toISOString();
@@ -798,15 +978,20 @@ class HybridDataStore {
     issue.status = "not_returned";
     issue.admin_notes = params.notes || "Item checked in equipment room but not found physically.";
     issue.updated_at = now;
-    this.issues.set(issue.id, issue);
 
-    const item = this.inventory.get(issue.inventory_item_id);
-    if (item) {
-      item.status = "issued";
-      item.updated_at = now;
-      this.inventory.set(item.id, item);
+    // 1. Update Supabase equipment_issues
+    const { error: notReturnedErr } = await supabase.from("equipment_issues").update({
+      status: "not_returned",
+      admin_notes: issue.admin_notes,
+      updated_at: now,
+    }).eq("id", issue.id);
+
+    if (notReturnedErr) {
+      console.error("Supabase markNotReturned update error:", notReturnedErr);
+      return { error: `Database save failed: ${notReturnedErr.message}` };
     }
 
+    // 2. Verification event
     const eventId = `verif-${Date.now()}`;
     const verifEvent: ReturnVerificationEvent = {
       id: eventId,
@@ -820,18 +1005,19 @@ class HybridDataStore {
       created_at: now,
     };
     this.verificationEvents.set(eventId, verifEvent);
+    await supabase.from("return_verification_events").insert(verifEvent);
 
-    safeRun(
-      supabase.from("equipment_issues").update({
-        status: "not_returned",
-        admin_notes: issue.admin_notes,
-        updated_at: now,
-      }).eq("id", issue.id)
-    );
+    // 3. Update memory
+    this.issues.set(issue.id, issue);
+    const item = this.inventory.get(issue.inventory_item_id);
+    if (item) {
+      item.status = "issued";
+      item.updated_at = now;
+      this.inventory.set(item.id, item);
+    }
 
-    safeRun(supabase.from("return_verification_events").insert(verifEvent));
-
-    this.logAudit(admin.id, admin.email, "PHYSICAL_CHECK_NOT_RETURNED", issue.id, "equipment_issue", {
+    // 4. Audit Log in Supabase & memory
+    await this.logAuditAsync(admin.id, admin.email, "PHYSICAL_CHECK_NOT_RETURNED", issue.id, "equipment_issue", {
       studentEmail: issue.user_email,
       hadOnlineSubmission,
       notes: params.notes,
@@ -1173,14 +1359,38 @@ class HybridDataStore {
     );
   }
 
-  private logAudit(
+  public async getUserIssues(userId?: string, userEmail?: string): Promise<EquipmentIssue[]> {
+    const cleanEmail = userEmail?.trim().toLowerCase();
+    try {
+      let query = supabase.from("equipment_issues").select("*").order("issue_timestamp", { ascending: false });
+      if (cleanEmail && userId) {
+        query = query.or(`user_id.eq.${userId},user_email.ilike.${cleanEmail}`);
+      } else if (cleanEmail) {
+        query = query.ilike("user_email", cleanEmail);
+      } else if (userId) {
+        query = query.eq("user_id", userId);
+      }
+      const { data, error } = await query;
+      if (data && !error && data.length > 0) {
+        data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+      }
+    } catch (e) {
+      console.error("Supabase getUserIssues query error:", e);
+    }
+
+    return Array.from(this.issues.values())
+      .filter((iss) => (userId && iss.user_id === userId) || (cleanEmail && iss.user_email.toLowerCase() === cleanEmail))
+      .sort((a, b) => new Date(b.issue_timestamp).getTime() - new Date(a.issue_timestamp).getTime());
+  }
+
+  public async logAuditAsync(
     actorId: string,
     actorEmail: string,
     eventType: string,
     recordId: string,
     recordType: string,
     metadata: Record<string, unknown>
-  ) {
+  ): Promise<AuditLog> {
     const id = `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const log: AuditLog = {
       id,
@@ -1194,7 +1404,23 @@ class HybridDataStore {
     };
     this.auditLogs.set(id, log);
 
-    safeRun(supabase.from("audit_logs").insert(log));
+    try {
+      await supabase.from("audit_logs").insert(log);
+    } catch (e) {
+      console.error("Failed to insert audit log into Supabase:", e);
+    }
+    return log;
+  }
+
+  private logAudit(
+    actorId: string,
+    actorEmail: string,
+    eventType: string,
+    recordId: string,
+    recordType: string,
+    metadata: Record<string, unknown>
+  ) {
+    this.logAuditAsync(actorId, actorEmail, eventType, recordId, recordType, metadata).catch(() => {});
   }
 }
 

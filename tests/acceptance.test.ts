@@ -19,6 +19,26 @@ async function runTests() {
     }
   }
 
+  // Ensure clean database state for test students
+  try {
+    const { supabase } = await import("../src/lib/supabase/client");
+    await supabase
+      .from("equipment_issues")
+      .update({ status: "returned", physical_returned_at: new Date().toISOString() })
+      .in("user_email", ["rohan.joshi@flame.edu.in", "priya.nair@flame.edu.in"]);
+    await supabase
+      .from("damage_reports")
+      .update({ resolution_status: "resolved", resolution_notes: "Reset for acceptance test." })
+      .in("equipment_number", ["#1", "#2", "#3", "#4"]);
+    await supabase
+      .from("inventory_items")
+      .update({ status: "available" })
+      .in("id", ["item-s-badminton-rkt-1", "item-s-badminton-rkt-2", "item-s-badminton-rkt-3", "item-s-badminton-rkt-4"]);
+    await dbStore.hydrateFromSupabase();
+  } catch (e) {
+    console.error("Test cleanup error:", e);
+  }
+
   // 1. Authentication & Role Enforcement
   console.log("--- 1. Authentication & Domain Checks ---");
   const studentAuth = dbStore.authenticateUser("priya.nair@flame.edu.in", "Priya Nair");
@@ -212,7 +232,7 @@ async function runTests() {
   });
 
   // D. Admin restores the damaged item to 'available' after repair
-  const restoreResult = dbStore.updateInventoryItemStatus(
+  const restoreResult = await dbStore.updateInventoryItemStatus(
     secondRacket.id,
     "available",
     adminAuth.user.id,
