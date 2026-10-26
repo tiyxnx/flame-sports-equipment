@@ -310,6 +310,40 @@ async function runTests() {
     "Admin confirms return; item returns to circulation"
   );
 
+  // Post-test cleanup: Purge any test records created during test execution
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const { supabase } = await import("../src/lib/supabase/client");
+    const testEmails = ["rohan.joshi@flame.edu.in", "priya.nair@flame.edu.in"];
+    const { data: testIssues } = await supabase
+      .from("equipment_issues")
+      .select("id")
+      .in("user_email", testEmails);
+    const issueIds = (testIssues || []).map((i) => i.id);
+
+    if (issueIds.length > 0) {
+      await supabase.from("return_verification_events").delete().in("issue_id", issueIds);
+      await supabase.from("damage_reports").delete().in("issue_id", issueIds);
+      await supabase.from("equipment_issues").delete().in("id", issueIds);
+    }
+    await supabase.from("damage_reports").delete().in("equipment_number", ["#1", "#2", "#3", "#4"]);
+    await supabase.from("users").delete().in("email", testEmails);
+    await supabase.from("notification_logs").delete().neq("id", "none");
+    await supabase.from("audit_logs").delete().neq("id", "none");
+    await supabase
+      .from("inventory_items")
+      .update({ status: "available", notes: null })
+      .in("id", [
+        "item-s-badminton-rkt-1",
+        "item-s-badminton-rkt-2",
+        "item-s-badminton-rkt-3",
+        "item-s-badminton-rkt-4",
+      ]);
+    await dbStore.hydrateFromSupabase();
+  } catch (e) {
+    console.error("Post-test cleanup error:", e);
+  }
+
   // 10. Summary
   console.log("\n==================================================================");
   console.log(`Results: ${passedCount} PASSED, ${failedCount} FAILED`);
@@ -324,3 +358,4 @@ runTests().catch((err) => {
   console.error("Test execution failed:", err);
   process.exit(1);
 });
+

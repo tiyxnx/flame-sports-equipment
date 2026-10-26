@@ -137,12 +137,6 @@ class HybridDataStore {
         ? ADMIN_UUID
         : cleanEmail === "tiyana.shah@flame.edu.in"
         ? "a16f8cf2-c469-4d99-90ad-4fde3a783b02"
-        : cleanEmail === "rohan.joshi@flame.edu.in"
-        ? "9c2d49fc-b415-4096-90b1-2a419299a20c"
-        : cleanEmail === "priya.nair@flame.edu.in"
-        ? "e9513aa4-f6a4-4b5c-81bc-f65ace0fb77a"
-        : cleanEmail === "meenakshi.sv@flame.edu.in"
-        ? "4c2a403c-27b3-4e1a-9944-7dedf06e51c0"
         : crypto.randomUUID();
       const newUser: User = {
         id: userId,

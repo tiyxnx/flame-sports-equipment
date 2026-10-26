@@ -14,13 +14,11 @@ npm run dev
 
 Then open your web browser to: **[http://localhost:3000](http://localhost:3000)**
 
-### Pre-loaded University Accounts Ready for Demo:
-- **Sports Administrator**: `asmi.malushte@flame.edu.in` (Asmi Malushte) — Has access to the complete Admin Dashboard, real-time KPI metrics, verification controls, and inventory management.
-- **Student with Active Item**: `rohan.sharma@flame.edu.in` (Rohan Sharma) — Has Badminton Racket #3 checked out. Shows the return workflow.
-- **Student with Return Pending**: `ananya.verma@flame.edu.in` (Ananya Verma) — Has submitted a return with photo proof. Demonstrates the pending verification status.
-- **Student Overdue**: `kabir.patel@flame.edu.in` (Kabir Patel) — Has missed the 11:00 PM IST deadline. Demonstrates overdue tracking.
+### Authorized University Administrators:
+- `asmi.malushte@flame.edu.in` (Asmi Malushte) — Full access to Admin Dashboard, KPI metrics, physical verification controls, inventory management, and 1-click overdue reminders.
+- `tiyana.shah@flame.edu.in` (Tiyana Shah) — Full administrator permissions and dual Admin / Student views.
 
-You can switch between any of these accounts in 1 click using the top-right profile menu!
+Any FLAME University student or staff member logging in with their official `@flame.edu.in` Google account receives direct access to the live sports equipment catalog with zero dummy data.
 
 ---
 

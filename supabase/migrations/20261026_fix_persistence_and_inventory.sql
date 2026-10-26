@@ -14,9 +14,10 @@ ALTER TABLE public.return_verification_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sports DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.equipment_types DISABLE ROW LEVEL SECURITY;
 
--- 2. Insert Official Administrator Record (asmi.malushte@flame.edu.in)
+-- 2. Insert Official Administrator Records (asmi.malushte@flame.edu.in & tiyana.shah@flame.edu.in)
 INSERT INTO public.users (id, email, name, role) VALUES
-    ('00000000-0000-0000-0000-000000000001', 'asmi.malushte@flame.edu.in', 'Asmi Malushte', 'admin')
+    ('00000000-0000-0000-0000-000000000001', 'asmi.malushte@flame.edu.in', 'Asmi Malushte', 'admin'),
+    ('a16f8cf2-c469-4d99-90ad-4fde3a783b02', 'tiyana.shah@flame.edu.in', 'Tiyana Shah', 'admin')
 ON CONFLICT (email) DO UPDATE SET role = 'admin';
 
 -- 3. Insert All 78 Physical Inventory Items into Equipment Room Catalog

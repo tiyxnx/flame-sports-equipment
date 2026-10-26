@@ -20,7 +20,8 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users (lower(email));
 
 INSERT INTO public.users (id, email, name, role) VALUES
-    ('00000000-0000-0000-0000-000000000001', 'asmi.malushte@flame.edu.in', 'Asmi Malushte', 'admin')
+    ('00000000-0000-0000-0000-000000000001', 'asmi.malushte@flame.edu.in', 'Asmi Malushte', 'admin'),
+    ('a16f8cf2-c469-4d99-90ad-4fde3a783b02', 'tiyana.shah@flame.edu.in', 'Tiyana Shah', 'admin')
 ON CONFLICT (email) DO UPDATE SET role = 'admin';
 
 -- 3. Sports Table

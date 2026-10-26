@@ -34,30 +34,6 @@ export const INITIAL_USERS: User[] = [
     created_at: new Date().toISOString(),
     last_login_at: new Date().toISOString(),
   },
-  {
-    id: "9c2d49fc-b415-4096-90b1-2a419299a20c",
-    email: "rohan.joshi@flame.edu.in",
-    name: "Rohan Joshi",
-    role: "student",
-    created_at: new Date().toISOString(),
-    last_login_at: new Date().toISOString(),
-  },
-  {
-    id: "e9513aa4-f6a4-4b5c-81bc-f65ace0fb77a",
-    email: "priya.nair@flame.edu.in",
-    name: "Priya Nair",
-    role: "student",
-    created_at: new Date().toISOString(),
-    last_login_at: new Date().toISOString(),
-  },
-  {
-    id: "4c2a403c-27b3-4e1a-9944-7dedf06e51c0",
-    email: "meenakshi.sv@flame.edu.in",
-    name: "Meenakshi SV",
-    role: "student",
-    created_at: new Date().toISOString(),
-    last_login_at: new Date().toISOString(),
-  },
 ];
 
 // Official sports catalog
@@ -163,16 +139,5 @@ export const INITIAL_ISSUES: EquipmentIssue[] = [];
 // Zero fake damage reports - clean slate
 export const INITIAL_DAMAGE_REPORTS: DamageReport[] = [];
 
-// Initial institutional audit log
-export const INITIAL_AUDIT_LOGS: AuditLog[] = [
-  {
-    id: "audit-1",
-    actor_id: "usr-admin-1",
-    actor_email: "asmi.malushte@flame.edu.in",
-    event_type: "SYSTEM_INITIALIZED",
-    record_id: "system",
-    record_type: "inventory",
-    timestamp: new Date().toISOString(),
-    metadata: { note: "FLAME University Sports Equipment Room initialised." },
-  },
-];
+// Zero fake audit logs - clean slate
+export const INITIAL_AUDIT_LOGS: AuditLog[] = [];
