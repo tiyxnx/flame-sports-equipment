@@ -1338,6 +1338,36 @@ class HybridDataStore {
     );
   }
 
+  public async logNotification(log: NotificationLog): Promise<void> {
+    this.notificationLogs.set(log.id, log);
+    const dbType = [
+      "issue_confirmation",
+      "return_submitted",
+      "reminder_10pm",
+      "overdue_11pm",
+      "damage_report",
+    ].includes(log.notification_type)
+      ? log.notification_type
+      : "reminder_10pm";
+
+    safeRun(
+      supabase.from("notification_logs").insert({
+        id: log.id,
+        issue_id: log.issue_id,
+        recipient_email: log.recipient_email,
+        recipient_name: log.recipient_name,
+        notification_type: dbType,
+        subject: log.subject,
+        body: log.body,
+        scheduled_time: log.scheduled_time,
+        attempt_time: log.attempt_time,
+        delivery_status: log.delivery_status,
+        error_message: log.error_message,
+        created_at: log.created_at,
+      })
+    );
+  }
+
   public async getVerificationEvents(): Promise<ReturnVerificationEvent[]> {
     try {
       const { data, error } = await supabase

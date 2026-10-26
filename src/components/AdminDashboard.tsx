@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { User, EquipmentIssue, InventoryItem, AuditLog, NotificationLog } from "@/types";
 import { formatIstDate, formatIstTime, formatIstDateTime } from "@/lib/date-utils";
 import {
@@ -20,6 +20,8 @@ import {
   Info,
   Mail,
   RotateCcw,
+  ExternalLink,
+  Copy,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
@@ -27,9 +29,20 @@ interface AdminDashboardProps {
   adminUser: User;
 }
 
+interface EmailDraftState {
+  recipientEmails: string[];
+  recipientNames: string[];
+  subject: string;
+  body: string;
+  issueId?: string;
+  isBatch?: boolean;
+}
+
 export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<"issues" | "inventory" | "audit" | "notifications">("issues");
-  const [loading, setLoading] = useState<boolean>(true);
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [autoSync, setAutoSync] = useState<boolean>(false); // Disabled by default for manual control
 
   // Issues and metrics
   const [issues, setIssues] = useState<EquipmentIssue[]>([]);
@@ -65,6 +78,15 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
   const [lastSyncedTime, setLastSyncedTime] = useState<string>("");
   const [sendEmailOnNotReturned, setSendEmailOnNotReturned] = useState<boolean>(true);
 
+  // Email Draft Modal State (1-Click FLAME Gmail & Mailto sender)
+  const [emailDraftModal, setEmailDraftModal] = useState<EmailDraftState | null>(null);
+  const [editedSubject, setEditedSubject] = useState<string>("");
+  const [editedBody, setEditedBody] = useState<string>("");
+
+  // Email Test state
+  const [testEmailRecipient, setTestEmailRecipient] = useState<string>("tiyanashah21@gmail.com");
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState<boolean>(false);
+
   // Inventory Add Modal
   const [showAddInventoryModal, setShowAddInventoryModal] = useState<boolean>(false);
   const [newSportId, setNewSportId] = useState<string>("s-badminton");
@@ -76,28 +98,32 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     setTimeout(() => setToastMessage(null), 5000);
   };
 
-  const fetchIssuesData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        adminEmail: adminUser.email,
-        search: searchQuery,
-        status: statusFilter,
-        sport: sportFilter,
-      });
+  const fetchIssuesData = useCallback(
+    async (showRefreshing = false) => {
+      if (showRefreshing) setIsRefreshing(true);
+      try {
+        const params = new URLSearchParams({
+          adminEmail: adminUser.email,
+          search: searchQuery,
+          status: statusFilter,
+          sport: sportFilter,
+        });
 
-      const res = await fetch(`/api/admin/issues?${params.toString()}`);
-      const data = await res.json();
-      if (res.ok) {
-        setIssues(data.issues || []);
-        if (data.metrics) setMetrics(data.metrics);
+        const res = await fetch(`/api/admin/issues?${params.toString()}`);
+        const data = await res.json();
+        if (res.ok) {
+          setIssues(data.issues || []);
+          if (data.metrics) setMetrics(data.metrics);
+        }
+      } catch {
+        showToast("Error loading equipment issues.");
+      } finally {
+        setInitialLoading(false);
+        if (showRefreshing) setIsRefreshing(false);
       }
-    } catch {
-      showToast("Error loading equipment issues.");
-    } finally {
-      setLoading(false);
-    }
-  }, [adminUser.email, searchQuery, statusFilter, sportFilter]);
+    },
+    [adminUser.email, searchQuery, statusFilter, sportFilter]
+  );
 
   const fetchInventoryData = useCallback(async () => {
     try {
@@ -129,13 +155,41 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     }
   }, [adminUser.email]);
 
-  // Full Realtime synchronization + 10s auto-refresh fallback
+  // Stable references for realtime event handlers
+  const fetchIssuesRef = useRef(fetchIssuesData);
+  fetchIssuesRef.current = fetchIssuesData;
+  const fetchInventoryRef = useRef(fetchInventoryData);
+  fetchInventoryRef.current = fetchInventoryData;
+  const fetchAuditRef = useRef(fetchAuditData);
+  fetchAuditRef.current = fetchAuditData;
+  const fetchNotificationsRef = useRef(fetchNotificationsData);
+  fetchNotificationsRef.current = fetchNotificationsData;
+
+  // Manual & unified refresh function
+  const refreshAllData = useCallback(async (isManual = false) => {
+    setIsRefreshing(true);
+    try {
+      await Promise.allSettled([
+        fetchIssuesRef.current(false),
+        fetchInventoryRef.current(),
+        fetchAuditRef.current(),
+        fetchNotificationsRef.current(),
+      ]);
+      setLastSyncedTime(
+        new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })
+      );
+      if (isManual) {
+        showToast("Dashboard synchronized with live database.");
+      }
+    } finally {
+      setIsRefreshing(false);
+      setInitialLoading(false);
+    }
+  }, []);
+
+  // 1. Initial Mount: Load all datasets once and establish single Realtime channel
   useEffect(() => {
-    fetchIssuesData();
-    fetchInventoryData();
-    fetchAuditData();
-    fetchNotificationsData();
-    setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+    refreshAllData(false);
 
     const channel = supabase
       .channel("admin-realtime-dashboard")
@@ -143,52 +197,87 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
         "postgres_changes",
         { event: "*", schema: "public", table: "equipment_issues" },
         () => {
-          fetchIssuesData();
-          fetchInventoryData();
-          setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+          fetchIssuesRef.current(false);
+          fetchInventoryRef.current();
+          setLastSyncedTime(
+            new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })
+          );
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "inventory_items" },
         () => {
-          fetchInventoryData();
-          fetchIssuesData();
+          fetchInventoryRef.current();
+          fetchIssuesRef.current(false);
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "return_verification_events" },
         () => {
-          fetchIssuesData();
-          fetchAuditData();
+          fetchIssuesRef.current(false);
+          fetchAuditRef.current();
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "damage_reports" },
         () => {
-          fetchInventoryData();
-          fetchAuditData();
+          fetchInventoryRef.current();
+          fetchAuditRef.current();
         }
       )
       .subscribe((status) => {
         setIsRealtimeConnected(status === "SUBSCRIBED");
       });
 
-    const interval = setInterval(() => {
-      fetchIssuesData();
-      fetchInventoryData();
-      fetchAuditData();
-      fetchNotificationsData();
-      setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
-    }, 10000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(interval);
     };
-  }, [fetchIssuesData, fetchInventoryData, fetchAuditData, fetchNotificationsData]);
+  }, [refreshAllData]);
+
+  // 2. Fetch issues when filters change (without tearing down Realtime)
+  useEffect(() => {
+    fetchIssuesData(false);
+  }, [fetchIssuesData]);
+
+  // 3. User-controlled Auto-Sync: ONLY runs if the user checks 'Auto-sync'
+  useEffect(() => {
+    if (!autoSync) return;
+    const interval = setInterval(() => {
+      refreshAllData(false);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [autoSync, refreshAllData]);
+
+  // Manual Live Test Email Dispatcher
+  const handleSendTestEmail = async () => {
+    if (!testEmailRecipient.trim()) return;
+    setIsSendingTestEmail(true);
+    try {
+      const res = await fetch("/api/admin/notifications/test-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: adminUser.email,
+          recipientEmail: testEmailRecipient.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast("Test email sent! Check your inbox.");
+        fetchNotificationsData();
+      } else {
+        showToast(data.message || data.error || "Failed to send test email.");
+        fetchNotificationsData();
+      }
+    } catch {
+      showToast("Network error dispatching test email.");
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
 
   // 1-Click Instant Pre-Drafted Return Reminder Email
   const handleSendReminder = async (issue: EquipmentIssue) => {
@@ -216,6 +305,164 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     } finally {
       setSendingReminderId(null);
     }
+  };
+
+  // Open Pre-Drafted Return Reminder for an Individual Issue
+  const openSingleDraft = (issue: EquipmentIssue) => {
+    const subject = `URGENT: Sports Equipment Return Notice — ${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`;
+    const body = `Dear ${issue.user_name},
+
+This is an urgent notice from the FLAME University Sports Equipment Room regarding the equipment currently checked out under your account:
+
+• Sport: ${issue.sport_name}
+• Equipment: ${issue.equipment_type_name} ${issue.equipment_number}
+• Issued At: ${formatIstDateTime(issue.issue_timestamp)}
+• Mandatory Return Deadline: 11:00 PM IST Today
+
+Our live sports equipment room records show that this item has NOT yet been returned and verified at the sports room counter.
+
+Please return this item immediately to the sports equipment room handler before 11:00 PM IST today to avoid disciplinary holds, replacement penalties, or restrictions on your future sports checkout privileges.
+
+If you have already deposited this equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
+
+Regards,
+${adminUser.name || "Sports Administrator"}
+Department of Sports
+FLAME University, Pune`;
+
+    setEmailDraftModal({
+      recipientEmails: [issue.user_email],
+      recipientNames: [issue.user_name],
+      subject,
+      body,
+      issueId: issue.id,
+      isBatch: false,
+    });
+    setEditedSubject(subject);
+    setEditedBody(body);
+  };
+
+  // Instant 1-Click Open in FLAME Gmail (Single Issue)
+  const directOpenSingleGmail = (issue: EquipmentIssue) => {
+    const subject = `URGENT: Sports Equipment Return Notice — ${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`;
+    const body = `Dear ${issue.user_name},
+
+This is an urgent notice from the FLAME University Sports Equipment Room regarding the equipment currently checked out under your account:
+
+• Sport: ${issue.sport_name}
+• Equipment: ${issue.equipment_type_name} ${issue.equipment_number}
+• Issued At: ${formatIstDateTime(issue.issue_timestamp)}
+• Mandatory Return Deadline: 11:00 PM IST Today
+
+Our live sports equipment room records show that this item has NOT yet been returned and verified at the sports room counter.
+
+Please return this item immediately to the sports equipment room handler before 11:00 PM IST today to avoid disciplinary holds, replacement penalties, or restrictions on your future sports checkout privileges.
+
+If you have already deposited this equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
+
+Regards,
+${adminUser.name || "Sports Administrator"}
+Department of Sports
+FLAME University, Pune`;
+
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+      issue.user_email
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+
+    handleSendReminder(issue);
+    showToast(`Draft opened in FLAME Gmail! Ready to send to ${issue.user_email}.`);
+  };
+
+  // Open Batch Pre-Drafted Email for ALL Unreturned Students Before 11 PM
+  const openBatchDraft = () => {
+    const unreturned = issues.filter((i) =>
+      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    );
+    if (unreturned.length === 0) {
+      showToast("No unreturned equipment items found.");
+      return;
+    }
+
+    const emailMap = new Map<string, string>();
+    unreturned.forEach((i) => {
+      if (!emailMap.has(i.user_email)) {
+        emailMap.set(i.user_email, i.user_name);
+      }
+    });
+
+    const emails = Array.from(emailMap.keys());
+    const names = Array.from(emailMap.values());
+
+    const subject = `URGENT: Sports Equipment Return Notice (Mandatory Return Before 11:00 PM IST)`;
+    const body = `Dear FLAME University Students,
+
+This is an official notice from the Department of Sports regarding sports equipment currently checked out under your student account today.
+
+MANDATORY RETURN DEADLINE: 11:00 PM IST Today
+
+Our live sports equipment room records indicate that your checked-out sports equipment has NOT yet been returned to the equipment room counter.
+
+Please return and deposit all issued equipment (rackets, bats, balls, etc.) at the sports equipment room counter immediately before 11:00 PM IST today.
+
+Failure to physically return items before 11:00 PM IST will flag your account as overdue and may result in replacement charges or temporary suspension of sports room checkout privileges.
+
+If you have already deposited your equipment at the counter, please inform the counter handler so your return is physically confirmed in the portal.
+
+Regards,
+${adminUser.name || "Sports Administrator"}
+Department of Sports
+FLAME University, Pune`;
+
+    setEmailDraftModal({
+      recipientEmails: emails,
+      recipientNames: names,
+      subject,
+      body,
+      isBatch: true,
+    });
+    setEditedSubject(subject);
+    setEditedBody(body);
+  };
+
+  // Instant 1-Click Open in FLAME Gmail for ALL Unreturned Students
+  const directOpenBatchGmail = () => {
+    const unreturned = issues.filter((i) =>
+      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    );
+    if (unreturned.length === 0) {
+      showToast("No unreturned equipment items found.");
+      return;
+    }
+
+    const emails = Array.from(new Set(unreturned.map((i) => i.user_email)));
+    const subject = `URGENT: Sports Equipment Return Notice (Mandatory Return Before 11:00 PM IST)`;
+    const body = `Dear FLAME University Students,
+
+This is an official notice from the Department of Sports regarding sports equipment currently checked out under your student account today.
+
+MANDATORY RETURN DEADLINE: 11:00 PM IST Today
+
+Our live sports equipment room records indicate that your checked-out sports equipment has NOT yet been returned to the equipment room counter.
+
+Please return and deposit all issued equipment (rackets, bats, balls, etc.) at the sports equipment room counter immediately before 11:00 PM IST today.
+
+Failure to physically return items before 11:00 PM IST will flag your account as overdue and may result in replacement charges or temporary suspension of sports room checkout privileges.
+
+If you have already deposited your equipment at the counter, please inform the counter handler so your return is physically confirmed in the portal.
+
+Regards,
+${adminUser.name || "Sports Administrator"}
+Department of Sports
+FLAME University, Pune`;
+
+    // Put student recipients in BCC to protect privacy
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(
+      emails.join(",")
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+
+    showToast(`Group draft opened in FLAME Gmail with ${emails.length} unreturned student(s) in BCC!`);
   };
 
   // Execute Action 1: Confirm Return
@@ -457,44 +704,61 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
           </p>
         </div>
 
-        {/* Quick Action Buttons & Real-Time Sync Indicator */}
+        {/* Quick Action Buttons & Manual Load Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Manual Load / Refresh Button */}
+          <button
+            type="button"
+            onClick={() => refreshAllData(true)}
+            disabled={isRefreshing}
+            title="Manually reload latest issues and inventory from database"
+            className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold rounded-xl transition border border-slate-300 shadow-xs flex items-center gap-2 active:scale-95 disabled:opacity-60"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-red-600" : "text-slate-600"}`} />
+            <span>{isRefreshing ? "Refreshing..." : "Refresh Data"}</span>
+          </button>
+
+          {/* User-controlled Auto-Sync Toggle */}
+          <label
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer select-none transition"
+            title="Toggle background auto-refresh every 30 seconds"
+          >
+            <input
+              type="checkbox"
+              checked={autoSync}
+              onChange={(e) => {
+                setAutoSync(e.target.checked);
+                showToast(
+                  e.target.checked
+                    ? "Auto-sync enabled (refreshes every 30s)"
+                    : "Auto-sync disabled. Use 'Refresh Data' button to load manually."
+                );
+              }}
+              className="w-3.5 h-3.5 rounded text-red-600 focus:ring-red-500 border-slate-300"
+            />
+            <span>Auto-sync (30s)</span>
+          </label>
+
           {/* Real-time sync badge */}
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[11px] font-bold transition shadow-2xs ${
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition shadow-2xs ${
               isRealtimeConnected
                 ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-amber-50 border-amber-200 text-amber-800"
+                : "bg-slate-50 border-slate-200 text-slate-600"
             }`}
-            title="Real-time Supabase database listener active (auto-syncs every 10s)"
+            title="Real-time Supabase database listener active"
           >
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span>Live Sync</span>
+            <span>{isRealtimeConnected ? "Live" : "Offline"}</span>
             {lastSyncedTime && (
-              <span className="text-[10px] text-slate-500 font-normal hidden sm:inline">
-                ({lastSyncedTime})
+              <span className="text-[11px] text-slate-500 font-normal font-mono hidden sm:inline">
+                • {lastSyncedTime}
               </span>
             )}
           </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              fetchIssuesData();
-              fetchInventoryData();
-              fetchAuditData();
-              fetchNotificationsData();
-              setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
-              showToast("Dashboard synchronized with live database.");
-            }}
-            title="Force refresh all data now"
-            className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition border border-slate-200"
-          >
-            <RotateCcw className={`w-4 h-4 ${loading ? "animate-spin text-red-600" : ""}`} />
-          </button>
 
           <button
             type="button"
@@ -680,11 +944,11 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
 
               <button
                 type="button"
-                onClick={fetchIssuesData}
+                onClick={() => fetchIssuesData(true)}
                 className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl transition"
                 title="Refresh table"
               >
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin text-red-600" : ""}`} />
               </button>
             </div>
 
@@ -751,27 +1015,51 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
 
           {/* Unreturned Alert Banner */}
           {issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length > 0 && (
-            <div className="mx-4 p-3 bg-red-50 border border-red-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-red-900 shadow-2xs">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-red-600 text-white flex items-center justify-center font-bold shrink-0 shadow-2xs">
-                  <AlertTriangle className="w-4 h-4" />
+            <div className="mx-4 p-3.5 bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs text-red-900 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+                  <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="font-bold text-red-950">
-                    {issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length} Equipment Item(s) Awaiting Physical Return
+                  <p className="font-black text-red-950 text-sm">
+                    {issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length} Equipment Item(s) Awaiting Physical Return (Due by 11:00 PM IST)
                   </p>
                   <p className="text-[11px] text-red-700">
-                    Active students currently have equipment checked out. Click <strong>&quot;Send Reminder Email&quot;</strong> on any row below to dispatch the official return notice immediately.
+                    Students are required to return items before 11 PM. You can 1-click email all unreturned students directly from your FLAME Google account.
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setStatusFilter(statusFilter === "unreturned_all" ? "all" : "unreturned_all")}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-xs transition shrink-0 shadow-2xs"
-              >
-                {statusFilter === "unreturned_all" ? "Show All Issues" : "Filter Unreturned Items"}
-              </button>
+
+              <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0">
+                {/* 1-Click Send Email to All Unreturned Students */}
+                <button
+                  type="button"
+                  onClick={openBatchDraft}
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 active:scale-95"
+                  title="Open pre-drafted 11 PM return notice for all unreturned students in FLAME Gmail"
+                >
+                  <Mail className="w-3.5 h-3.5 text-white" />
+                  1-Click Email All Before 11 PM
+                </button>
+
+                {/* Instant Gmail compose for all */}
+                <button
+                  type="button"
+                  onClick={directOpenBatchGmail}
+                  className="p-2 bg-white hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs"
+                  title="Direct 1-Click: Open FLAME Gmail compose with all unreturned students in BCC"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(statusFilter === "unreturned_all" ? "all" : "unreturned_all")}
+                  className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold rounded-xl text-xs transition shadow-xs"
+                >
+                  {statusFilter === "unreturned_all" ? "Show All" : "Filter List"}
+                </button>
+              </div>
             </div>
           )}
 
@@ -791,10 +1079,13 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {loading ? (
+                {initialLoading && issues.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400">
-                      Loading issues...
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <RotateCcw className="w-5 h-5 animate-spin text-red-600" />
+                        <span>Loading equipment issues...</span>
+                      </div>
                     </td>
                   </tr>
                 ) : issues.length === 0 ? (
@@ -946,17 +1237,26 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
                                 <AlertTriangle className="w-3.5 h-3.5" /> Report Damage
                               </button>
 
-                              {/* Action 4: 1-Click Pre-Drafted Reminder Email */}
-                              <button
-                                type="button"
-                                onClick={() => handleSendReminder(iss)}
-                                disabled={sendingReminderId === iss.id}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold shadow-sm transition disabled:opacity-50"
-                                title={`1-Click dispatch pre-drafted return notice email to ${iss.user_email}`}
-                              >
-                                <Mail className="w-3.5 h-3.5" />
-                                {sendingReminderId === iss.id ? "Sending..." : "Send Reminder Email"}
-                              </button>
+                              {/* Action 4: Pre-Drafted Email & 1-Click FLAME Gmail Send */}
+                              <div className="inline-flex items-center rounded-lg shadow-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => openSingleDraft(iss)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-l-lg text-[11px] font-bold transition"
+                                  title="View pre-drafted 11 PM return notice and send via FLAME Gmail"
+                                >
+                                  <Mail className="w-3.5 h-3.5" />
+                                  Draft / Send 11 PM Notice
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => directOpenSingleGmail(iss)}
+                                  className="p-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-r-lg text-[11px] border-l border-blue-500 transition"
+                                  title="Instant 1-Click: Open compose in FLAME Gmail now"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <div className="text-[11px] text-slate-400">
@@ -1178,60 +1478,145 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
 
       {/* TAB 4: Dispatched Notifications Outbox */}
       {activeTab === "notifications" && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden space-y-4">
-          <div className="p-4 bg-slate-50/70 border-b border-slate-200 text-xs space-y-2">
-            <h3 className="font-bold text-slate-900">Automated Email Outbox</h3>
-            <p className="text-slate-500">
-              Dispatched 10 PM reminders, 11 PM overdue notifications, and issue/return confirmations
-            </p>
-            <div className="p-3 bg-blue-50/90 border border-blue-200 rounded-xl text-[11px] text-blue-900 flex items-start gap-2">
-              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+        <div className="space-y-4">
+          {/* Email Service Status & Test Trigger */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
-                <strong>Live Email Delivery:</strong> All notification logs are recorded below. To deliver real emails directly into student Gmail inboxes, provide a free Resend API key in Vercel as <code className="bg-blue-100 text-blue-900 px-1 py-0.5 rounded font-mono">RESEND_API_KEY</code>.
+                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-red-600" />
+                  Live Email Notification Service
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Automated return reminders (10 PM), overdue alerts (11 PM), damage notices, and 1-click urgent notices
+                </p>
               </div>
+              <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full font-bold text-[11px] self-start sm:self-auto flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Resend API Connected
+              </span>
+            </div>
+
+            {/* Trial Sandbox explanation banner */}
+            <div className="p-3.5 bg-blue-50/90 border border-blue-200 rounded-xl text-xs text-blue-950 space-y-1.5">
+              <div className="flex items-center gap-2 font-bold text-blue-900">
+                <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Resend Sandbox Mode (Free Tier)</span>
+              </div>
+              <p className="text-[11px] text-blue-800 leading-relaxed">
+                Your Resend API key is registered to <strong>tiyanashah21@gmail.com</strong>.
+                In Resend trial sandbox mode without a verified domain, all automated and manual emails are safely delivered into your developer Gmail (<strong>tiyanashah21@gmail.com</strong>) with full student headers.
+              </p>
+              <p className="text-[10px] text-blue-700">
+                To send emails directly to all student @flame.edu.in inboxes, verify your institutional domain at{" "}
+                <a
+                  href="https://resend.com/domains"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline font-bold hover:text-blue-900"
+                >
+                  resend.com/domains
+                </a>
+                .
+              </p>
+            </div>
+
+            {/* Instant Live Test Email Trigger */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="flex-1">
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Send Instant Test Email to Verify Delivery:
+                </label>
+                <input
+                  type="email"
+                  value={testEmailRecipient}
+                  onChange={(e) => setTestEmailRecipient(e.target.value)}
+                  placeholder="e.g. tiyanashah21@gmail.com"
+                  className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-slate-800"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSendTestEmail}
+                disabled={isSendingTestEmail || !testEmailRecipient.trim()}
+                className="self-end sm:self-auto px-4 py-2.5 bg-[#0B2545] hover:bg-[#133966] text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center gap-2 disabled:opacity-50 shrink-0"
+              >
+                <Send className={`w-3.5 h-3.5 ${isSendingTestEmail ? "animate-spin" : ""}`} />
+                {isSendingTestEmail ? "Dispatching..." : "Send Test Email"}
+              </button>
             </div>
           </div>
 
-          <div className="p-4 divide-y divide-slate-100 space-y-3">
-            {notifications.length === 0 ? (
-              <p className="text-xs text-slate-400 py-6 text-center">No notification emails dispatched yet.</p>
-            ) : (
-              notifications.map((notif) => {
-                const isSent = notif.delivery_status === "sent";
-                const isFailed = notif.delivery_status === "failed";
-                return (
-                  <div key={notif.id} className="pt-3 first:pt-0 space-y-1.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900">{notif.subject}</span>
-                      <span className="text-[11px] text-slate-400 font-mono">
-                        {formatIstDateTime(notif.attempt_time)}
-                      </span>
-                    </div>
-                    <div className="text-slate-500 text-[11px] flex items-center gap-2 flex-wrap">
-                      <span>To: <strong className="text-slate-800 font-semibold">{notif.recipient_email}</strong></span>
-                      <span>•</span>
-                      <span>Status:</span>
-                      {isSent ? (
-                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] rounded-full border border-emerald-200 uppercase">
-                          Delivered via Resend
+          {/* Outbox List */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden space-y-4">
+            <div className="p-4 bg-slate-50/70 border-b border-slate-200 text-xs flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900">Automated Email Outbox</h3>
+                <p className="text-slate-500">
+                  Chronological history of all return reminders, notices, and test dispatches
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchNotificationsData()}
+                className="text-xs text-blue-600 hover:text-blue-800 font-semibold"
+              >
+                Refresh Outbox
+              </button>
+            </div>
+
+            <div className="p-4 divide-y divide-slate-100 space-y-3">
+              {notifications.length === 0 ? (
+                <p className="text-xs text-slate-400 py-6 text-center">
+                  No notification emails dispatched yet. Click &quot;Send Test Email&quot; above to verify delivery!
+                </p>
+              ) : (
+                notifications.map((notif) => {
+                  const isSent = notif.delivery_status === "sent";
+                  const isFailed = notif.delivery_status === "failed";
+                  return (
+                    <div key={notif.id} className="pt-3 first:pt-0 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900">{notif.subject}</span>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {formatIstDateTime(notif.attempt_time)}
                         </span>
-                      ) : isFailed ? (
-                        <span className="px-2 py-0.5 bg-red-100 text-red-800 font-bold text-[10px] rounded-full border border-red-200 uppercase">
-                          Delivery Failed
+                      </div>
+                      <div className="text-slate-500 text-[11px] flex items-center gap-2 flex-wrap">
+                        <span>
+                          To: <strong className="text-slate-800 font-semibold">{notif.recipient_email}</strong>
                         </span>
-                      ) : (
-                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] rounded-full border border-amber-200 uppercase" title="Add RESEND_API_KEY to send directly to Gmail">
-                          Logged in Outbox (Needs Email API Key)
-                        </span>
+                        <span>•</span>
+                        <span>Status:</span>
+                        {isSent ? (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] rounded-full border border-emerald-200 uppercase">
+                            Delivered via Resend
+                          </span>
+                        ) : isFailed ? (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-800 font-bold text-[10px] rounded-full border border-red-200 uppercase">
+                            Delivery Failed
+                          </span>
+                        ) : (
+                          <span
+                            className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] rounded-full border border-amber-200 uppercase"
+                            title="Add RESEND_API_KEY to send directly to Gmail"
+                          >
+                            Logged in Outbox
+                          </span>
+                        )}
+                      </div>
+                      {notif.error_message && (
+                        <p className="text-[11px] text-emerald-700 bg-emerald-50/80 border border-emerald-200 p-2 rounded-lg font-medium">
+                          {notif.error_message}
+                        </p>
                       )}
+                      <p className="text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 whitespace-pre-line text-[11px]">
+                        {notif.body}
+                      </p>
                     </div>
-                    <p className="text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 whitespace-pre-line text-[11px]">
-                      {notif.body}
-                    </p>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1501,6 +1886,155 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
               >
                 Add Item
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTION MODAL 4: Pre-Drafted Email Modal (Single & Batch 11 PM Return Notice) */}
+      {emailDraftModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-[#0B2545] font-black text-base">
+                <Mail className="w-5 h-5 text-red-600" />
+                {emailDraftModal.isBatch
+                  ? `Pre-Drafted 11 PM Return Notice for All Unreturned Students (${emailDraftModal.recipientEmails.length})`
+                  : `Pre-Drafted 11 PM Return Notice: ${emailDraftModal.recipientNames[0] || "Student"}`}
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailDraftModal(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Sender and Domain Notice */}
+            <div className="p-3.5 bg-blue-50/90 border border-blue-200 rounded-xl text-xs text-blue-950 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>
+                  <strong>Sending From:</strong> {adminUser.email} (Official FLAME Google Account)
+                </span>
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-bold text-[10px] rounded-full">
+                  FLAME Internal Delivery
+                </span>
+              </div>
+              <p className="text-[11px] text-blue-800 leading-relaxed">
+                Opening in FLAME Gmail dispatches directly from your authenticated @flame.edu.in account to students within FLAME University, completely bypassing external email restrictions.
+              </p>
+            </div>
+
+            {/* Recipient(s) List */}
+            <div className="text-xs space-y-1">
+              <label className="font-bold text-slate-700 block">
+                {emailDraftModal.isBatch ? "Recipients (BCC to protect student privacy):" : "Recipient Student:"}
+              </label>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {emailDraftModal.recipientEmails.map((email, idx) => (
+                  <span
+                    key={email}
+                    className="px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-[11px] font-mono text-slate-700 shadow-2xs"
+                  >
+                    {emailDraftModal.recipientNames[idx] ? `${emailDraftModal.recipientNames[idx]} <${email}>` : email}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Subject Field */}
+            <div className="text-xs space-y-1">
+              <label className="font-bold text-slate-700 block">Email Subject:</label>
+              <input
+                type="text"
+                value={editedSubject}
+                onChange={(e) => setEditedSubject(e.target.value)}
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            {/* Message Body Field */}
+            <div className="text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-700">Pre-Drafted Message Body (Editable):</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`Subject: ${editedSubject}\n\n${editedBody}`);
+                    showToast("Draft copied to clipboard!");
+                  }}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Copy Text
+                </button>
+              </div>
+              <textarea
+                rows={9}
+                value={editedBody}
+                onChange={(e) => setEditedBody(e.target.value)}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEmailDraftModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition text-center"
+              >
+                Close
+              </button>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Mailto link */}
+                <a
+                  href={`mailto:${emailDraftModal.recipientEmails.join(",")}?subject=${encodeURIComponent(
+                    editedSubject
+                  )}&body=${encodeURIComponent(editedBody)}`}
+                  onClick={() => {
+                    if (emailDraftModal.issueId) {
+                      const targetIssue = issues.find((i) => i.id === emailDraftModal.issueId);
+                      if (targetIssue) handleSendReminder(targetIssue);
+                    }
+                    showToast("Opened in default mail app.");
+                    setEmailDraftModal(null);
+                  }}
+                  className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  Default Mail App
+                </a>
+
+                {/* Primary 1-Click Send via FLAME Gmail */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const recipientParam = emailDraftModal.isBatch
+                      ? `bcc=${encodeURIComponent(emailDraftModal.recipientEmails.join(","))}`
+                      : `to=${encodeURIComponent(emailDraftModal.recipientEmails.join(","))}`;
+                    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&${recipientParam}&su=${encodeURIComponent(
+                      editedSubject
+                    )}&body=${encodeURIComponent(editedBody)}`;
+                    window.open(gmailUrl, "_blank");
+
+                    if (emailDraftModal.issueId) {
+                      const targetIssue = issues.find((i) => i.id === emailDraftModal.issueId);
+                      if (targetIssue) handleSendReminder(targetIssue);
+                    }
+
+                    showToast(
+                      `Draft opened in FLAME Gmail! Ready to send from ${adminUser.email} in 1 click.`
+                    );
+                    setEmailDraftModal(null);
+                  }}
+                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition shadow-sm flex items-center gap-2 active:scale-95"
+                >
+                  <Send className="w-4 h-4" />
+                  Send via FLAME Gmail (1-Click)
+                </button>
+              </div>
             </div>
           </div>
         </div>

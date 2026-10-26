@@ -211,9 +211,52 @@ export async function sendEmailNotification(params: SendEmailParams): Promise<No
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        deliveryStatus = "failed";
-        errorMessage = `Resend API Error: ${res.status} ${JSON.stringify(errorData)}`;
+        const errorData = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          name?: string;
+          statusCode?: number;
+        };
+        const errorMsg = errorData?.message || "";
+        const sandboxOwnerEmail = process.env.RESEND_SANDBOX_EMAIL || "tiyanashah21@gmail.com";
+
+        // Handle Resend Free Sandbox restriction:
+        // Free trial accounts without a custom verified domain can only send to the account owner email.
+        if (
+          res.status === 403 &&
+          errorMsg.toLowerCase().includes("you can only send testing emails to your own email address") &&
+          params.recipientEmail.toLowerCase() !== sandboxOwnerEmail.toLowerCase()
+        ) {
+          try {
+            const fallbackRes = await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${resendApiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                from: senderEmail,
+                to: [sandboxOwnerEmail],
+                subject: `[For: ${params.recipientEmail}] ${subject}`,
+                text: `[RESEND TRIAL SANDBOX NOTICE]\nThis email was intended for: ${params.recipientEmail} (${params.recipientName}).\nBecause Resend is currently in free trial mode without a verified domain, it was delivered to the registered developer address: ${sandboxOwnerEmail}.\nTo deliver directly to @flame.edu.in student addresses, verify your domain at resend.com/domains.\n\n----------------------------------------\n\n${body}`,
+              }),
+            });
+
+            if (fallbackRes.ok) {
+              deliveryStatus = "sent";
+              errorMessage = `Resend Sandbox Delivery: Successfully delivered to developer Gmail (${sandboxOwnerEmail}) for testing. To send directly to student @flame.edu.in accounts, verify domain at resend.com/domains.`;
+            } else {
+              const fallbackError = await fallbackRes.json().catch(() => ({}));
+              deliveryStatus = "failed";
+              errorMessage = `Resend Sandbox Fallback Error: ${fallbackRes.status} ${JSON.stringify(fallbackError)}`;
+            }
+          } catch (fallbackErr: unknown) {
+            deliveryStatus = "failed";
+            errorMessage = fallbackErr instanceof Error ? fallbackErr.message : "Sandbox fallback failed";
+          }
+        } else {
+          deliveryStatus = "failed";
+          errorMessage = `Resend API Error: ${res.status} ${JSON.stringify(errorData)}`;
+        }
       } else {
         deliveryStatus = "sent";
       }
