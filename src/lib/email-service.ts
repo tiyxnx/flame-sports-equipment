@@ -13,9 +13,18 @@ export interface SendEmailParams {
   returnSubmittedTimestamp?: string;
   damageDescription?: string;
   reportTimestamp?: string;
+  customSubject?: string;
+  customBody?: string;
 }
 
 export function buildEmailContent(params: SendEmailParams): { subject: string; body: string } {
+  if (params.customSubject && params.customBody) {
+    return {
+      subject: params.customSubject,
+      body: params.customBody,
+    };
+  }
+
   const {
     type,
     recipientEmail,
@@ -88,15 +97,11 @@ FLAME University, Pune`,
         subject: "Reminder: Please Return Your Sports Equipment by 11 PM",
         body: `Dear Student,
 
-This is a reminder that the following sports equipment is currently recorded as outstanding under your name and must be returned to the FLAME University sports equipment room by 11:00 PM IST tonight.
+This is a reminder that sports equipment currently issued under your name has not yet been returned and must be returned to the FLAME University sports equipment room by 11:00 PM IST tonight.
 
-Sport: ${sportName}
-Equipment: ${equipmentTypeName}
-Equipment Number: ${equipmentNumber}
-Issue Date: ${issueDateFormatted}
 Return Deadline: 11:00 PM IST today
 
-Please return the equipment before the deadline. If you have already submitted a return through the website, please ensure the equipment has been physically received and confirmed by the equipment room handler.
+Please return all equipment before the deadline. If you have already submitted a return through the website, please ensure the equipment has been physically received and confirmed by the equipment room handler.
 
 Regards,
 Department of Sports
@@ -108,12 +113,8 @@ FLAME University`,
         subject: "Overdue Equipment: Return Deadline Missed — FLAME Sports",
         body: `Dear Student,
 
-Our records indicate that the following sports equipment has not been recorded as physically returned by the 11:00 PM IST deadline.
+Our records indicate that sports equipment issued under your account has not been recorded as physically returned by the 11:00 PM IST deadline.
 
-Sport: ${sportName}
-Equipment: ${equipmentTypeName}
-Equipment Number: ${equipmentNumber}
-Issue Date: ${issueDateFormatted}
 Return Deadline: 11:00 PM IST today
 
 The matter will be referred to the Department of Sports for review. You may be liable for a fine or other action as deemed appropriate under applicable university policies. You will receive further communication from the Department of Sports or Sports Committee regarding any applicable action.
@@ -150,22 +151,18 @@ FLAME University`,
 
     case "admin_unreturned_reminder":
       return {
-        subject: `URGENT: Sports Equipment Not Returned — ${sportName} ${equipmentTypeName} #${equipmentNumber}`,
+        subject: "URGENT: Sports Equipment Not Returned (Return Required Before 11 PM)",
         body: `Dear ${recipientName || "Student"},
 
-This is an official urgent notice from the FLAME University Sports Department administrator regarding the equipment issued under your account:
+This is an official urgent notice from the FLAME University Sports Equipment Room regarding the equipment issued under your account.
 
-• Sport: ${sportName}
-• Equipment: ${equipmentTypeName}
-• Equipment Number: ${equipmentNumber}
-• Issued At: ${issueDateTimeFormatted}
-• Return Deadline: 11:00 PM IST on ${issueDateFormatted}
+Our live equipment room records indicate that your borrowed sports equipment has NOT yet been returned and verified at the sports room counter.
 
-Our live equipment room records indicate that this equipment has NOT yet been returned and verified at the sports room counter.
+MANDATORY DEADLINE: 11:00 PM IST Today
 
-Please return this item immediately to the sports equipment room handler to clear your account and avoid replacement penalties or student account disciplinary holds.
+Please return and deposit all issued equipment immediately to the sports equipment room handler at the counter before 11:00 PM IST to clear your account and avoid replacement penalties or student account disciplinary holds.
 
-If you have already deposited this equipment at the counter, please report to the equipment room handler immediately so your physical return can be verified in the portal.
+If you have already deposited your equipment at the counter, please report to the equipment room handler immediately so your physical return can be verified in the portal.
 
 Regards,
 Department of Sports

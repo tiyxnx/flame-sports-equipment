@@ -22,6 +22,7 @@ import {
   RotateCcw,
   ExternalLink,
   Copy,
+  Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
@@ -82,6 +83,8 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
   const [emailDraftModal, setEmailDraftModal] = useState<EmailDraftState | null>(null);
   const [editedSubject, setEditedSubject] = useState<string>("");
   const [editedBody, setEditedBody] = useState<string>("");
+  const [isSendingBatch, setIsSendingBatch] = useState<boolean>(false);
+  const [isSendingFromModal, setIsSendingFromModal] = useState<boolean>(false);
 
   // Email Test state
   const [testEmailRecipient, setTestEmailRecipient] = useState<string>("tiyanashah21@gmail.com");
@@ -307,29 +310,135 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     }
   };
 
-  // Open Pre-Drafted Return Reminder for an Individual Issue
-  const openSingleDraft = (issue: EquipmentIssue) => {
-    const subject = `URGENT: Sports Equipment Return Notice — ${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`;
-    const body = `Dear ${issue.user_name},
+  // Universal 11 PM Return Notice text (removes item mentions, purely focused on return before 11 PM)
+  const getUniversalReturnNoticeSubject = () =>
+    "URGENT: Sports Equipment Not Returned (Return Required Before 11 PM)";
 
-This is an urgent notice from the FLAME University Sports Equipment Room regarding the equipment currently checked out under your account:
+  const getUniversalReturnNoticeBody = (studentName?: string) => `Dear ${studentName || "Student"},
 
-• Sport: ${issue.sport_name}
-• Equipment: ${issue.equipment_type_name} ${issue.equipment_number}
-• Issued At: ${formatIstDateTime(issue.issue_timestamp)}
-• Mandatory Return Deadline: 11:00 PM IST Today
+This is an official urgent notice from the FLAME University Sports Equipment Room regarding the equipment issued under your student account.
 
-Our live sports equipment room records show that this item has NOT yet been returned and verified at the sports room counter.
+Our live equipment room records indicate that sports equipment issued under your name has NOT yet been returned and verified at the sports room counter.
 
-Please return this item immediately to the sports equipment room handler before 11:00 PM IST today to avoid disciplinary holds, replacement penalties, or restrictions on your future sports checkout privileges.
+MANDATORY DEADLINE: 11:00 PM IST Today
 
-If you have already deposited this equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
+Please return and deposit all issued equipment immediately to the sports equipment room counter before 11:00 PM IST today to clear your account and avoid replacement penalties or student account disciplinary holds.
+
+If you have already deposited your equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
 
 Regards,
 ${adminUser.name || "Sports Administrator"}
 Department of Sports
 FLAME University, Pune`;
 
+  // 1-Click Auto-send return notice to an individual student
+  const handleAutoSendSingle = async (issue: EquipmentIssue) => {
+    setSendingReminderId(issue.id);
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody(issue.user_name);
+
+    try {
+      const res = await fetch("/api/admin/issues/send-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: adminUser.email,
+          issueId: issue.id,
+          customSubject: subject,
+          customBody: body,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Return notice auto-sent to ${issue.user_email}!`);
+        fetchNotificationsData();
+        fetchAuditData();
+      } else {
+        showToast(data.error || `Failed to auto-send notice to ${issue.user_email}`);
+      }
+    } catch {
+      showToast(`Network error auto-sending notice to ${issue.user_email}.`);
+    } finally {
+      setSendingReminderId(null);
+    }
+  };
+
+  // 1-Click Auto-send return notice to ALL students who haven't returned equipment before 11 PM
+  const handleAutoSendAllUnreturned = async () => {
+    const unreturned = issues.filter((i) =>
+      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    );
+    if (unreturned.length === 0) {
+      showToast("No unreturned equipment items found.");
+      return;
+    }
+
+    const uniqueEmails = Array.from(new Set(unreturned.map((i) => i.user_email)));
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody("FLAME University Students");
+    setIsSendingBatch(true);
+
+    try {
+      const res = await fetch("/api/admin/issues/send-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: adminUser.email,
+          sendToAll: true,
+          customSubject: subject,
+          customBody: body,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(
+          `Return notice auto-sent to all ${uniqueEmails.length} unreturned student(s)!`
+        );
+        fetchNotificationsData();
+        fetchAuditData();
+      } else {
+        showToast(data.error || "Failed to auto-send batch return notices.");
+      }
+    } catch {
+      showToast("Network error auto-sending batch return notices.");
+    } finally {
+      setIsSendingBatch(false);
+    }
+  };
+
+  // Direct open pre-filled compose in FLAME Gmail for an individual student
+  const directOpenSingleGmail = (issue: EquipmentIssue) => {
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody(issue.user_name);
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+      issue.user_email
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+  };
+
+  // Direct open pre-filled compose in FLAME Gmail for all unreturned students (BCC)
+  const directOpenBatchGmail = () => {
+    const unreturned = issues.filter((i) =>
+      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    );
+    if (unreturned.length === 0) {
+      showToast("No unreturned equipment items found.");
+      return;
+    }
+
+    const emails = Array.from(new Set(unreturned.map((i) => i.user_email)));
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody("FLAME University Students");
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(
+      emails.join(",")
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+  };
+
+  // Preview / Edit modal for single issue
+  const openSingleDraft = (issue: EquipmentIssue) => {
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody(issue.user_name);
     setEmailDraftModal({
       recipientEmails: [issue.user_email],
       recipientNames: [issue.user_name],
@@ -342,39 +451,7 @@ FLAME University, Pune`;
     setEditedBody(body);
   };
 
-  // Instant 1-Click Open in FLAME Gmail (Single Issue)
-  const directOpenSingleGmail = (issue: EquipmentIssue) => {
-    const subject = `URGENT: Sports Equipment Return Notice — ${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`;
-    const body = `Dear ${issue.user_name},
-
-This is an urgent notice from the FLAME University Sports Equipment Room regarding the equipment currently checked out under your account:
-
-• Sport: ${issue.sport_name}
-• Equipment: ${issue.equipment_type_name} ${issue.equipment_number}
-• Issued At: ${formatIstDateTime(issue.issue_timestamp)}
-• Mandatory Return Deadline: 11:00 PM IST Today
-
-Our live sports equipment room records show that this item has NOT yet been returned and verified at the sports room counter.
-
-Please return this item immediately to the sports equipment room handler before 11:00 PM IST today to avoid disciplinary holds, replacement penalties, or restrictions on your future sports checkout privileges.
-
-If you have already deposited this equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
-
-Regards,
-${adminUser.name || "Sports Administrator"}
-Department of Sports
-FLAME University, Pune`;
-
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
-      issue.user_email
-    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, "_blank");
-
-    handleSendReminder(issue);
-    showToast(`Draft opened in FLAME Gmail! Ready to send to ${issue.user_email}.`);
-  };
-
-  // Open Batch Pre-Drafted Email for ALL Unreturned Students Before 11 PM
+  // Preview / Edit modal for all unreturned
   const openBatchDraft = () => {
     const unreturned = issues.filter((i) =>
       ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
@@ -393,26 +470,8 @@ FLAME University, Pune`;
 
     const emails = Array.from(emailMap.keys());
     const names = Array.from(emailMap.values());
-
-    const subject = `URGENT: Sports Equipment Return Notice (Mandatory Return Before 11:00 PM IST)`;
-    const body = `Dear FLAME University Students,
-
-This is an official notice from the Department of Sports regarding sports equipment currently checked out under your student account today.
-
-MANDATORY RETURN DEADLINE: 11:00 PM IST Today
-
-Our live sports equipment room records indicate that your checked-out sports equipment has NOT yet been returned to the equipment room counter.
-
-Please return and deposit all issued equipment (rackets, bats, balls, etc.) at the sports equipment room counter immediately before 11:00 PM IST today.
-
-Failure to physically return items before 11:00 PM IST will flag your account as overdue and may result in replacement charges or temporary suspension of sports room checkout privileges.
-
-If you have already deposited your equipment at the counter, please inform the counter handler so your return is physically confirmed in the portal.
-
-Regards,
-${adminUser.name || "Sports Administrator"}
-Department of Sports
-FLAME University, Pune`;
+    const subject = getUniversalReturnNoticeSubject();
+    const body = getUniversalReturnNoticeBody("FLAME University Students");
 
     setEmailDraftModal({
       recipientEmails: emails,
@@ -423,46 +482,6 @@ FLAME University, Pune`;
     });
     setEditedSubject(subject);
     setEditedBody(body);
-  };
-
-  // Instant 1-Click Open in FLAME Gmail for ALL Unreturned Students
-  const directOpenBatchGmail = () => {
-    const unreturned = issues.filter((i) =>
-      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
-    );
-    if (unreturned.length === 0) {
-      showToast("No unreturned equipment items found.");
-      return;
-    }
-
-    const emails = Array.from(new Set(unreturned.map((i) => i.user_email)));
-    const subject = `URGENT: Sports Equipment Return Notice (Mandatory Return Before 11:00 PM IST)`;
-    const body = `Dear FLAME University Students,
-
-This is an official notice from the Department of Sports regarding sports equipment currently checked out under your student account today.
-
-MANDATORY RETURN DEADLINE: 11:00 PM IST Today
-
-Our live sports equipment room records indicate that your checked-out sports equipment has NOT yet been returned to the equipment room counter.
-
-Please return and deposit all issued equipment (rackets, bats, balls, etc.) at the sports equipment room counter immediately before 11:00 PM IST today.
-
-Failure to physically return items before 11:00 PM IST will flag your account as overdue and may result in replacement charges or temporary suspension of sports room checkout privileges.
-
-If you have already deposited your equipment at the counter, please inform the counter handler so your return is physically confirmed in the portal.
-
-Regards,
-${adminUser.name || "Sports Administrator"}
-Department of Sports
-FLAME University, Pune`;
-
-    // Put student recipients in BCC to protect privacy
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(
-      emails.join(",")
-    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, "_blank");
-
-    showToast(`Group draft opened in FLAME Gmail with ${emails.length} unreturned student(s) in BCC!`);
   };
 
   // Execute Action 1: Confirm Return
@@ -1031,25 +1050,47 @@ FLAME University, Pune`;
               </div>
 
               <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0">
-                {/* 1-Click Send Email to All Unreturned Students */}
+                {/* 1-Click Auto-Send Email to All Unreturned Students */}
+                <button
+                  type="button"
+                  disabled={isSendingBatch}
+                  onClick={handleAutoSendAllUnreturned}
+                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 active:scale-95 disabled:opacity-60"
+                  title="1-Click: Automatically send official 11 PM return notices to all unreturned students"
+                >
+                  {isSendingBatch ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                      Auto-Sending to All...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5 text-white" />
+                      1-Click Auto-Send to All Before 11 PM
+                    </>
+                  )}
+                </button>
+
+                {/* Preview group draft */}
                 <button
                   type="button"
                   onClick={openBatchDraft}
-                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 active:scale-95"
-                  title="Open pre-drafted 11 PM return notice for all unreturned students in FLAME Gmail"
+                  className="p-2 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1"
+                  title="Preview & edit return notice before sending"
                 >
-                  <Mail className="w-3.5 h-3.5 text-white" />
-                  1-Click Email All Before 11 PM
+                  <Eye className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Preview</span>
                 </button>
 
-                {/* Instant Gmail compose for all */}
+                {/* Instant FLAME Gmail compose for all in BCC */}
                 <button
                   type="button"
                   onClick={directOpenBatchGmail}
-                  className="p-2 bg-white hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs"
-                  title="Direct 1-Click: Open FLAME Gmail compose with all unreturned students in BCC"
+                  className="p-2 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1"
+                  title="Open FLAME Gmail compose with all unreturned students in BCC"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">FLAME Gmail</span>
                 </button>
 
                 <button
@@ -1237,22 +1278,40 @@ FLAME University, Pune`;
                                 <AlertTriangle className="w-3.5 h-3.5" /> Report Damage
                               </button>
 
-                              {/* Action 4: Pre-Drafted Email & 1-Click FLAME Gmail Send */}
+                              {/* Action 4: Auto-Send 11 PM Return Notice */}
                               <div className="inline-flex items-center rounded-lg shadow-xs">
                                 <button
                                   type="button"
-                                  onClick={() => openSingleDraft(iss)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-l-lg text-[11px] font-bold transition"
-                                  title="View pre-drafted 11 PM return notice and send via FLAME Gmail"
+                                  disabled={sendingReminderId === iss.id}
+                                  onClick={() => handleAutoSendSingle(iss)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-l-lg text-[11px] font-bold transition disabled:opacity-50"
+                                  title="1-Click: Auto-send official 11 PM return notice to this student"
                                 >
-                                  <Mail className="w-3.5 h-3.5" />
-                                  Draft / Send 11 PM Notice
+                                  {sendingReminderId === iss.id ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      Sending...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Send className="w-3.5 h-3.5" />
+                                      Auto-Send 11 PM Notice
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openSingleDraft(iss)}
+                                  className="p-1.5 bg-blue-700 hover:bg-blue-800 text-white text-[11px] border-l border-blue-500 transition"
+                                  title="Preview or edit email draft before sending"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => directOpenSingleGmail(iss)}
-                                  className="p-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-r-lg text-[11px] border-l border-blue-500 transition"
-                                  title="Instant 1-Click: Open compose in FLAME Gmail now"
+                                  className="p-1.5 bg-blue-800 hover:bg-blue-900 text-white rounded-r-lg text-[11px] border-l border-blue-600 transition"
+                                  title="Open pre-drafted compose in FLAME Gmail"
                                 >
                                   <ExternalLink className="w-3.5 h-3.5" />
                                 </button>
@@ -1996,7 +2055,7 @@ FLAME University, Pune`;
                   onClick={() => {
                     if (emailDraftModal.issueId) {
                       const targetIssue = issues.find((i) => i.id === emailDraftModal.issueId);
-                      if (targetIssue) handleSendReminder(targetIssue);
+                      if (targetIssue) handleAutoSendSingle(targetIssue);
                     }
                     showToast("Opened in default mail app.");
                     setEmailDraftModal(null);
@@ -2007,7 +2066,7 @@ FLAME University, Pune`;
                   Default Mail App
                 </a>
 
-                {/* Primary 1-Click Send via FLAME Gmail */}
+                {/* Open in FLAME Gmail */}
                 <button
                   type="button"
                   onClick={() => {
@@ -2019,20 +2078,67 @@ FLAME University, Pune`;
                     )}&body=${encodeURIComponent(editedBody)}`;
                     window.open(gmailUrl, "_blank");
 
-                    if (emailDraftModal.issueId) {
-                      const targetIssue = issues.find((i) => i.id === emailDraftModal.issueId);
-                      if (targetIssue) handleSendReminder(targetIssue);
-                    }
-
                     showToast(
-                      `Draft opened in FLAME Gmail! Ready to send from ${adminUser.email} in 1 click.`
+                      `Draft opened in FLAME Gmail with pre-filled message!`
                     );
                     setEmailDraftModal(null);
                   }}
-                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition shadow-sm flex items-center gap-2 active:scale-95"
+                  className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5 active:scale-95"
                 >
-                  <Send className="w-4 h-4" />
-                  Send via FLAME Gmail (1-Click)
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Open in FLAME Gmail
+                </button>
+
+                {/* Primary: 1-Click Auto-Send Directly */}
+                <button
+                  type="button"
+                  disabled={isSendingFromModal}
+                  onClick={async () => {
+                    setIsSendingFromModal(true);
+                    try {
+                      const res = await fetch("/api/admin/issues/send-reminder", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          adminEmail: adminUser.email,
+                          issueId: emailDraftModal.isBatch ? "all" : emailDraftModal.issueId,
+                          sendToAll: emailDraftModal.isBatch,
+                          customSubject: editedSubject,
+                          customBody: editedBody,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (res.ok) {
+                        showToast(
+                          emailDraftModal.isBatch
+                            ? `Return notice auto-sent to all ${emailDraftModal.recipientEmails.length} unreturned student(s)!`
+                            : `Return notice auto-sent to ${emailDraftModal.recipientEmails[0]}!`
+                        );
+                        setEmailDraftModal(null);
+                        fetchNotificationsData();
+                        fetchAuditData();
+                      } else {
+                        showToast(data.error || "Failed to auto-send email notice.");
+                      }
+                    } catch {
+                      showToast("Network error auto-sending email notice.");
+                    } finally {
+                      setIsSendingFromModal(false);
+                    }
+                  }}
+                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition shadow-sm flex items-center gap-2 active:scale-95 disabled:opacity-60"
+                >
+                  {isSendingFromModal ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      Auto-Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Auto-Send Email Now
+                    </>
+                  )}
                 </button>
               </div>
             </div>

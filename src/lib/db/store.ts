@@ -1216,6 +1216,8 @@ class HybridDataStore {
   public async sendAdminReminder(params: {
     issueId: string;
     adminEmail: string;
+    customSubject?: string;
+    customBody?: string;
   }): Promise<{ success: boolean; emailLog?: NotificationLog; error?: string }> {
     const cleanAdminEmail = params.adminEmail?.trim().toLowerCase();
     if (!isAdminEmail(cleanAdminEmail)) {
@@ -1250,6 +1252,8 @@ class HybridDataStore {
       equipmentTypeName: issue.equipment_type_name,
       equipmentNumber: issue.equipment_number,
       issueTimestamp: issue.issue_timestamp,
+      customSubject: params.customSubject,
+      customBody: params.customBody,
     });
 
     this.notificationLogs.set(emailLog.id, emailLog);
@@ -1275,6 +1279,57 @@ class HybridDataStore {
     });
 
     return { success: true, emailLog };
+  }
+
+  // --- Admin Action: 1-Click Send Reminders to ALL Unreturned Students ---
+  public async sendAdminRemindersToAll(
+    adminEmail: string,
+    customSubject?: string,
+    customBody?: string
+  ): Promise<{ success: boolean; count: number; error?: string }> {
+    const cleanAdminEmail = adminEmail?.trim().toLowerCase();
+    if (!isAdminEmail(cleanAdminEmail)) {
+      return { success: false, count: 0, error: "Unauthorized: Administrator privileges required." };
+    }
+
+    const unreturned = Array.from(this.issues.values()).filter((i) =>
+      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    );
+
+    let sentCount = 0;
+    for (const issue of unreturned) {
+      const emailLog = await sendEmailNotification({
+        type: "admin_unreturned_reminder",
+        recipientEmail: issue.user_email,
+        recipientName: issue.user_name,
+        issueId: issue.id,
+        sportName: issue.sport_name,
+        equipmentTypeName: issue.equipment_type_name,
+        equipmentNumber: issue.equipment_number,
+        issueTimestamp: issue.issue_timestamp,
+        customSubject,
+        customBody,
+      });
+
+      await this.logNotification(emailLog);
+      sentCount++;
+    }
+
+    const adminUser = this.getUserByEmail(cleanAdminEmail);
+    const adminId = adminUser?.id || "00000000-0000-0000-0000-000000000001";
+    this.logAudit(
+      adminId,
+      cleanAdminEmail,
+      "ADMIN_UNRETURNED_REMINDERS_BATCH_SENT",
+      "all_unreturned",
+      "equipment_issues",
+      {
+        dispatchedCount: sentCount,
+        note: "Universal 11 PM return notice auto-sent to all unreturned students.",
+      }
+    );
+
+    return { success: true, count: sentCount };
   }
 
   // --- Queries ---
