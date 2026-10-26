@@ -25,6 +25,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import { isAuthorizedEmailSender } from "@/lib/auth-constants";
 
 interface AdminDashboardProps {
   adminUser: User;
@@ -61,6 +62,9 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [notifications, setNotifications] = useState<NotificationLog[]>([]);
+
+  // Email sending authorization check: Only Asmi and Tiyana
+  const canSendWarningEmail = isAuthorizedEmailSender(adminUser.email);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -333,6 +337,11 @@ Official Admin Email: ${adminUser.email}`;
 
   // 1-Click Send warning email to an individual student from admin's FLAME Gmail
   const handleSendWarningEmailSingle = (issue: EquipmentIssue) => {
+    if (!isAuthorizedEmailSender(adminUser.email)) {
+      showToast("Access denied: Only Asmi Malushte and Tiyana Shah are authorized to send warning emails.");
+      return;
+    }
+
     const subject = getUniversalReturnNoticeSubject();
     const body = getUniversalReturnNoticeBody(issue.user_name);
 
@@ -364,6 +373,11 @@ Official Admin Email: ${adminUser.email}`;
 
   // 1-Click Send warning email to ALL students who haven't returned equipment before 11 PM
   const handleSendWarningEmailAll = () => {
+    if (!isAuthorizedEmailSender(adminUser.email)) {
+      showToast("Access denied: Only Asmi Malushte and Tiyana Shah are authorized to send warning emails.");
+      return;
+    }
+
     const unreturned = issues.filter((i) =>
       ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
     );
@@ -406,6 +420,11 @@ Official Admin Email: ${adminUser.email}`;
 
   // Preview / Edit modal for single issue
   const openSingleDraft = (issue: EquipmentIssue) => {
+    if (!isAuthorizedEmailSender(adminUser.email)) {
+      showToast("Access denied: Only Asmi Malushte and Tiyana Shah are authorized to send warning emails.");
+      return;
+    }
+
     const subject = getUniversalReturnNoticeSubject();
     const body = getUniversalReturnNoticeBody(issue.user_name);
     setEmailDraftModal({
@@ -422,6 +441,11 @@ Official Admin Email: ${adminUser.email}`;
 
   // Preview / Edit modal for all unreturned
   const openBatchDraft = () => {
+    if (!isAuthorizedEmailSender(adminUser.email)) {
+      showToast("Access denied: Only Asmi Malushte and Tiyana Shah are authorized to send warning emails.");
+      return;
+    }
+
     const unreturned = issues.filter((i) =>
       ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
     );
@@ -1018,17 +1042,31 @@ Official Admin Email: ${adminUser.email}`;
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 self-start lg:self-auto shrink-0">
                 {/* Button says "Send warning email" as requested */}
-                <button
-                  type="button"
-                  onClick={handleSendWarningEmailAll}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-2 active:scale-95"
-                  title={`Send official warning email from ${adminUser.email} to all unreturned students`}
-                >
-                  <Mail className="w-4 h-4 text-white" />
-                  Send warning email
-                </button>
+                <div className="flex flex-col items-start sm:items-end gap-1">
+                  <button
+                    type="button"
+                    onClick={handleSendWarningEmailAll}
+                    disabled={!canSendWarningEmail}
+                    className={`px-4 py-2 font-black rounded-xl text-xs transition shadow-sm flex items-center gap-2 ${
+                      canSendWarningEmail
+                        ? "bg-red-600 hover:bg-red-700 text-white active:scale-95 cursor-pointer"
+                        : "bg-slate-300 text-slate-500 cursor-not-allowed opacity-60"
+                    }`}
+                    title={
+                      canSendWarningEmail
+                        ? `Send official warning email from ${adminUser.email} to all unreturned students`
+                        : "Only Asmi Malushte and Tiyana Shah are authorized to send warning emails"
+                    }
+                  >
+                    <Mail className="w-4 h-4 text-white" />
+                    Send warning email
+                  </button>
+                  <span className="text-[10px] text-red-800 font-semibold">
+                    Authorized senders: asmi.malushte@flame.edu.in &amp; tiyana.shah@flame.edu.in
+                  </span>
+                </div>
 
                 {/* Preview / customize warning draft */}
                 <button
@@ -1231,8 +1269,17 @@ Official Admin Email: ${adminUser.email}`;
                                 <button
                                   type="button"
                                   onClick={() => handleSendWarningEmailSingle(iss)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-l-lg text-[11px] font-bold transition active:scale-95"
-                                  title={`Send official warning email to ${iss.user_email} from ${adminUser.email}`}
+                                  disabled={!canSendWarningEmail}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-l-lg text-[11px] font-bold transition ${
+                                    canSendWarningEmail
+                                      ? "bg-red-600 hover:bg-red-700 text-white active:scale-95 cursor-pointer"
+                                      : "bg-slate-300 text-slate-500 cursor-not-allowed opacity-60"
+                                  }`}
+                                  title={
+                                    canSendWarningEmail
+                                      ? `Send official warning email to ${iss.user_email} from ${adminUser.email}`
+                                      : "Only Asmi Malushte and Tiyana Shah are authorized to send warning emails"
+                                  }
                                 >
                                   <Mail className="w-3.5 h-3.5" />
                                   Send warning email
@@ -1240,7 +1287,12 @@ Official Admin Email: ${adminUser.email}`;
                                 <button
                                   type="button"
                                   onClick={() => openSingleDraft(iss)}
-                                  className="p-1.5 bg-red-700 hover:bg-red-800 text-white rounded-r-lg text-[11px] border-l border-red-500 transition"
+                                  disabled={!canSendWarningEmail}
+                                  className={`p-1.5 rounded-r-lg text-[11px] border-l border-red-500 transition ${
+                                    canSendWarningEmail
+                                      ? "bg-red-700 hover:bg-red-800 text-white cursor-pointer"
+                                      : "bg-slate-400 text-slate-600 cursor-not-allowed opacity-60"
+                                  }`}
                                   title="Preview or customize warning draft"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
@@ -1957,6 +2009,11 @@ Official Admin Email: ${adminUser.email}`;
                 <button
                   type="button"
                   onClick={() => {
+                    if (!isAuthorizedEmailSender(adminUser.email)) {
+                      showToast("Access denied: Only Asmi Malushte and Tiyana Shah are authorized to send warning emails.");
+                      return;
+                    }
+
                     const recipientParam = emailDraftModal.isBatch
                       ? `bcc=${encodeURIComponent(emailDraftModal.recipientEmails.join(","))}`
                       : `to=${encodeURIComponent(emailDraftModal.recipientEmails.join(","))}`;

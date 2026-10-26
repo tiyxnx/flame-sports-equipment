@@ -26,8 +26,13 @@ import { sendEmailNotification } from "../email-service";
 import { supabase } from "../supabase/client";
 
 const FLAME_DOMAIN = "@flame.edu.in";
-import { ADMIN_EMAILS as AUTH_ADMIN_EMAILS, isAdminEmail } from "../auth-constants";
-export { isAdminEmail };
+import {
+  ADMIN_EMAILS as AUTH_ADMIN_EMAILS,
+  isAdminEmail,
+  isAuthorizedEmailSender,
+  AUTHORIZED_EMAIL_SENDERS,
+} from "../auth-constants";
+export { isAdminEmail, isAuthorizedEmailSender, AUTHORIZED_EMAIL_SENDERS };
 export const ADMIN_EMAILS = new Set(AUTH_ADMIN_EMAILS);
 const ADMIN_EMAIL = "asmi.malushte@flame.edu.in";
 const ADMIN_UUID = "00000000-0000-0000-0000-000000000001";
@@ -1227,8 +1232,11 @@ class HybridDataStore {
     customBody?: string;
   }): Promise<{ success: boolean; emailLog?: NotificationLog; error?: string }> {
     const cleanAdminEmail = params.adminEmail?.trim().toLowerCase();
-    if (!isAdminEmail(cleanAdminEmail)) {
-      return { success: false, error: "Unauthorized: Administrator privileges required." };
+    if (!isAuthorizedEmailSender(cleanAdminEmail)) {
+      return {
+        success: false,
+        error: "Unauthorized: Only asmi.malushte@flame.edu.in and tiyana.shah@flame.edu.in are authorized to send warning emails to students.",
+      };
     }
 
     let issue = this.issues.get(params.issueId);
@@ -1295,8 +1303,12 @@ class HybridDataStore {
     customBody?: string
   ): Promise<{ success: boolean; count: number; error?: string }> {
     const cleanAdminEmail = adminEmail?.trim().toLowerCase();
-    if (!isAdminEmail(cleanAdminEmail)) {
-      return { success: false, count: 0, error: "Unauthorized: Administrator privileges required." };
+    if (!isAuthorizedEmailSender(cleanAdminEmail)) {
+      return {
+        success: false,
+        count: 0,
+        error: "Unauthorized: Only asmi.malushte@flame.edu.in and tiyana.shah@flame.edu.in are authorized to send warning emails to students.",
+      };
     }
 
     const unreturned = Array.from(this.issues.values()).filter((i) =>

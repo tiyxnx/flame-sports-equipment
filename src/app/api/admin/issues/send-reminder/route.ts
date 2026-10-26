@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dbStore, isAdminEmail } from "@/lib/db/store";
+import { dbStore, isAuthorizedEmailSender } from "@/lib/db/store";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { adminEmail, issueId, sendToAll, customSubject, customBody } = body;
 
-    if (!isAdminEmail(adminEmail)) {
+    if (!isAuthorizedEmailSender(adminEmail)) {
       return NextResponse.json(
-        { error: "Access denied. Administrator privileges required." },
+        {
+          error:
+            "Access denied: Only asmi.malushte@flame.edu.in and tiyana.shah@flame.edu.in are authorized to send warning emails to students.",
+        },
         { status: 403 }
       );
     }
