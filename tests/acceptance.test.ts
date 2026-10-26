@@ -1,4 +1,4 @@
-import { dbStore } from "../src/lib/db/store";
+import { dbStore, isAdminEmail } from "../src/lib/db/store";
 import { getReturnDeadlineForDate, getLiabilityDisclaimer } from "../src/lib/date-utils";
 
 async function runTests() {
@@ -43,6 +43,15 @@ async function runTests() {
   assert(
     Boolean(invalidDomainAuth.error),
     "External non-@flame.edu.in account is strictly rejected"
+  );
+
+  assert(
+    isAdminEmail("tiyana.shah@flame.edu.in") && isAdminEmail("asmi.malushte@flame.edu.in"),
+    "Dual Admin & Student view allowed for tiyana.shah@flame.edu.in and asmi.malushte@flame.edu.in"
+  );
+  assert(
+    !isAdminEmail("priya.nair@flame.edu.in") && !isAdminEmail("student@flame.edu.in"),
+    "Regular students strictly prohibited from accessing dual Admin view"
   );
 
   // 2. Issuing Equipment & One-Issue Rule

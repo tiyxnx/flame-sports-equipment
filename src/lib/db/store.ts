@@ -26,11 +26,9 @@ import { sendEmailNotification } from "../email-service";
 import { supabase } from "../supabase/client";
 
 const FLAME_DOMAIN = "@flame.edu.in";
-export const ADMIN_EMAILS = new Set(["asmi.malushte@flame.edu.in", "tiyana.shah@flame.edu.in"]);
-export function isAdminEmail(email?: string | null): boolean {
-  if (!email) return false;
-  return ADMIN_EMAILS.has(email.trim().toLowerCase());
-}
+import { ADMIN_EMAILS as AUTH_ADMIN_EMAILS, isAdminEmail } from "../auth-constants";
+export { isAdminEmail };
+export const ADMIN_EMAILS = new Set(AUTH_ADMIN_EMAILS);
 const ADMIN_EMAIL = "asmi.malushte@flame.edu.in";
 const ADMIN_UUID = "00000000-0000-0000-0000-000000000001";
 

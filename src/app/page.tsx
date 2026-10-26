@@ -7,9 +7,11 @@ import StudentDashboard from "@/components/StudentDashboard";
 import AdminDashboard from "@/components/AdminDashboard";
 import { supabase } from "@/lib/supabase/client";
 import { ShieldCheck, AlertCircle, ArrowRight, UserCheck } from "lucide-react";
+import { isAdminEmail } from "@/lib/auth-constants";
 
 export default function HomePage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [adminViewMode, setAdminViewMode] = useState<"admin" | "student">("admin");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [showTestMode, setShowTestMode] = useState<boolean>(false);
@@ -137,12 +139,22 @@ export default function HomePage() {
       // ignore
     }
     setCurrentUser(null);
+    setAdminViewMode("admin");
     localStorage.removeItem("flame_sports_user");
   };
 
+  const isUserAdmin = currentUser
+    ? currentUser.role === "admin" || isAdminEmail(currentUser.email)
+    : false;
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <Header currentUser={currentUser} onLogout={handleLogout} />
+      <Header
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        adminViewMode={adminViewMode}
+        onSwitchView={setAdminViewMode}
+      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex items-center justify-center">
         {!currentUser ? (
@@ -252,18 +264,44 @@ export default function HomePage() {
                     </button>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    Entering asmi.malushte@flame.edu.in or tiyana.shah@flame.edu.in loads Admin view; any other @flame.edu.in loads Student view.
+                    Entering asmi.malushte@flame.edu.in or tiyana.shah@flame.edu.in grants dual Admin &amp; Student access; any other @flame.edu.in loads Student view only.
                   </p>
                 </form>
               )}
             </div>
           </div>
-        ) : currentUser.role === "admin" ? (
+        ) : isUserAdmin && adminViewMode === "admin" ? (
           /* Role: Administrator Dashboard */
           <AdminDashboard adminUser={currentUser} />
         ) : (
-          /* Role: Student Dashboard */
-          <StudentDashboard user={currentUser} />
+          /* Role: Student Dashboard (Accessible to students, or admins previewing Student View) */
+          <div className="w-full flex flex-col items-center">
+            {isUserAdmin && (
+              <div className="w-full max-w-xl mb-4 p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl shadow-sm flex items-center justify-between gap-3 text-xs text-amber-950">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold shrink-0">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-bold leading-tight">
+                      Admin Preview Mode
+                    </p>
+                    <p className="text-[11px] text-amber-800">
+                      Viewing portal from student perspective as <strong>{currentUser.email}</strong>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAdminViewMode("admin")}
+                  className="px-3 py-1.5 bg-[#0B2545] hover:bg-[#133966] text-white text-[11px] font-bold rounded-xl shadow-xs transition shrink-0"
+                >
+                  Back to Admin View →
+                </button>
+              </div>
+            )}
+            <StudentDashboard user={currentUser} />
+          </div>
         )}
       </main>
 
