@@ -14,6 +14,7 @@ import {
   AlertOctagon,
   ShieldAlert,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase/client";
 
 interface StudentDashboardProps {
   user: User;
@@ -43,9 +44,30 @@ export default function StudentDashboard({ user }: StudentDashboardProps) {
     }
   }, [user.id, user.email]);
 
+  // Full Real-time Sync + 10s auto-refresh fallback
   useEffect(() => {
     fetchActiveIssue();
-  }, [fetchActiveIssue]);
+
+    const channel = supabase
+      .channel(`student-sync-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "equipment_issues" },
+        () => {
+          fetchActiveIssue();
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(() => {
+      fetchActiveIssue();
+    }, 10000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [user.id, fetchActiveIssue]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -88,8 +110,21 @@ export default function StudentDashboard({ user }: StudentDashboardProps) {
             <h2 className="text-xl font-bold text-[#0B2545]">{user.name}</h2>
             <p className="text-xs text-slate-500">{user.email}</p>
           </div>
-          <div className="w-12 h-12 rounded-full bg-red-50 text-red-700 font-bold flex items-center justify-center border border-red-100 text-base">
-            {user.name.charAt(0)}
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                fetchActiveIssue();
+                showToast("Equipment status refreshed.");
+              }}
+              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
+              title="Refresh status"
+            >
+              <RotateCcw className={`w-4 h-4 ${loading ? "animate-spin text-red-600" : ""}`} />
+            </button>
+            <div className="w-12 h-12 rounded-full bg-red-50 text-red-700 font-bold flex items-center justify-center border border-red-100 text-base">
+              {user.name.charAt(0)}
+            </div>
           </div>
         </div>
       </div>

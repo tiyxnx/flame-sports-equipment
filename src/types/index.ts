@@ -120,7 +120,8 @@ export type NotificationType =
   | "return_submitted"
   | "reminder_10pm"
   | "overdue_11pm"
-  | "damage_report";
+  | "damage_report"
+  | "admin_unreturned_reminder";
 
 export interface NotificationLog {
   id: string;

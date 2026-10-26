@@ -220,23 +220,42 @@ class HybridDataStore {
     return all;
   }
 
-  public getInventory(): InventoryItem[] {
-    safeRun(
-      supabase.from("inventory_items").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((item) => {
-            const sport = this.sports.get(item.sport_id);
-            const eqType = this.equipmentTypes.get(item.equipment_type_id);
-            const enriched: InventoryItem = {
-              ...item,
-              sport_name: sport?.name || item.sport_name || "",
-              equipment_type_name: eqType?.name || item.equipment_type_name || "",
-            };
-            this.inventory.set(enriched.id, enriched);
-          });
-        }
-      })
-    );
+  public async getInventory(): Promise<InventoryItem[]> {
+    try {
+      const { data, error } = await supabase.from("inventory_items").select("*");
+      if (data && !error && data.length > 0) {
+        data.forEach((item) => {
+          const sport = this.sports.get(item.sport_id);
+          const eqType = this.equipmentTypes.get(item.equipment_type_id);
+          const enriched: InventoryItem = {
+            ...item,
+            sport_name: sport?.name || item.sport_name || "",
+            equipment_type_name: eqType?.name || item.equipment_type_name || "",
+          };
+          this.inventory.set(enriched.id, enriched);
+        });
+      }
+    } catch {}
+
+    try {
+      const { data: issuesData } = await supabase
+        .from("equipment_issues")
+        .select("*")
+        .in("status", ["issued", "return_submitted", "overdue", "not_returned"]);
+      if (issuesData && issuesData.length > 0) {
+        issuesData.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+      }
+    } catch {}
+
+    try {
+      const { data: dmgData } = await supabase
+        .from("damage_reports")
+        .select("*")
+        .eq("resolution_status", "pending");
+      if (dmgData && dmgData.length > 0) {
+        dmgData.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
+      }
+    } catch {}
 
     // Cross-reference with active issues (if an item is currently issued, it is NOT available)
     const activeIssuesByItem = new Map<string, EquipmentIssue>();
@@ -282,8 +301,8 @@ class HybridDataStore {
     });
   }
 
-  public getAvailableItems(sportId: string, equipmentTypeId: string): InventoryItem[] {
-    const inv = this.getInventory();
+  public async getAvailableItems(sportId: string, equipmentTypeId: string): Promise<InventoryItem[]> {
+    const inv = await this.getInventory();
     return inv.filter(
       (item) =>
         item.sport_id === sportId &&
@@ -401,27 +420,26 @@ class HybridDataStore {
   }
 
   // --- Active Issue Check ---
-  public getActiveIssueForUser(userId: string, userEmail?: string): EquipmentIssue | null {
+  public async getActiveIssueForUser(userId: string, userEmail?: string): Promise<EquipmentIssue | null> {
     const activeStatuses: IssueStatus[] = ["issued", "return_submitted", "overdue", "not_returned"];
     const cleanEmail = userEmail?.trim().toLowerCase();
 
-    // Background sync check
+    // Direct database sync check
     if (userId || cleanEmail) {
-      let query = supabase.from("equipment_issues").select("*").in("status", activeStatuses);
-      if (cleanEmail && userId) {
-        query = query.or(`user_id.eq.${userId},user_email.ilike.${cleanEmail}`);
-      } else if (cleanEmail) {
-        query = query.ilike("user_email", cleanEmail);
-      } else if (userId) {
-        query = query.eq("user_id", userId);
-      }
-      safeRun(
-        query.then(({ data }) => {
-          if (data && data.length > 0) {
-            data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
-          }
-        })
-      );
+      try {
+        let query = supabase.from("equipment_issues").select("*").in("status", activeStatuses);
+        if (cleanEmail && userId) {
+          query = query.or(`user_id.eq.${userId},user_email.ilike.${cleanEmail}`);
+        } else if (cleanEmail) {
+          query = query.ilike("user_email", cleanEmail);
+        } else if (userId) {
+          query = query.eq("user_id", userId);
+        }
+        const { data } = await query;
+        if (data && data.length > 0) {
+          data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+        }
+      } catch {}
     }
 
     const found = Array.from(this.issues.values()).find(
@@ -461,7 +479,7 @@ class HybridDataStore {
     }
 
     // Enforce 1 active issue rule
-    const activeIssue = this.getActiveIssueForUser(user.id, user.email);
+    const activeIssue = await this.getActiveIssueForUser(user.id, user.email);
     if (activeIssue) {
       return {
         error: `Active equipment issue detected (${activeIssue.sport_name} ${activeIssue.equipment_type_name} ${activeIssue.equipment_number}). You must return your current equipment before issuing another item.`,
@@ -513,8 +531,14 @@ class HybridDataStore {
     this.issues.set(newIssue.id, newIssue);
     this.inventory.set(item.id, item);
 
-    safeRun(supabase.from("equipment_issues").insert(newIssue));
-    safeRun(supabase.from("inventory_items").update({ status: "issued", updated_at: nowIso }).eq("id", item.id));
+    try {
+      await Promise.all([
+        supabase.from("equipment_issues").insert(newIssue),
+        supabase.from("inventory_items").update({ status: "issued", updated_at: nowIso }).eq("id", item.id),
+      ]);
+    } catch (e) {
+      console.error("Supabase sync error on issue:", e);
+    }
 
     this.logAudit(user.id, user.email, "EQUIPMENT_ISSUED", newIssue.id, "equipment_issue", {
       sport: newIssue.sport_name,
@@ -1008,67 +1032,142 @@ class HybridDataStore {
     return { count: dispatchedLogs.length, logs: dispatchedLogs };
   }
 
-  // --- Queries ---
-  public getAllIssues(): EquipmentIssue[] {
-    safeRun(
-      supabase.from("equipment_issues").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+  // --- Admin Action: 1-Click Send Reminder for Unreturned Equipment ---
+  public async sendAdminReminder(params: {
+    issueId: string;
+    adminEmail: string;
+  }): Promise<{ success: boolean; emailLog?: NotificationLog; error?: string }> {
+    const cleanAdminEmail = params.adminEmail?.trim().toLowerCase();
+    if (!isAdminEmail(cleanAdminEmail)) {
+      return { success: false, error: "Unauthorized: Administrator privileges required." };
+    }
+
+    let issue = this.issues.get(params.issueId);
+    if (!issue) {
+      try {
+        const { data } = await supabase.from("equipment_issues").select("*").eq("id", params.issueId).maybeSingle();
+        if (data) {
+          issue = data as EquipmentIssue;
+          this.issues.set(issue.id, issue);
         }
-      })
-    );
+      } catch {}
+    }
+
+    if (!issue) {
+      return { success: false, error: "Equipment issue record not found." };
+    }
+
+    if (issue.status === "returned") {
+      return { success: false, error: "This equipment has already been returned and confirmed." };
+    }
+
+    const emailLog = await sendEmailNotification({
+      type: "admin_unreturned_reminder",
+      recipientEmail: issue.user_email,
+      recipientName: issue.user_name,
+      issueId: issue.id,
+      sportName: issue.sport_name,
+      equipmentTypeName: issue.equipment_type_name,
+      equipmentNumber: issue.equipment_number,
+      issueTimestamp: issue.issue_timestamp,
+    });
+
+    this.notificationLogs.set(emailLog.id, emailLog);
+
+    try {
+      const dbLog = {
+        ...emailLog,
+        notification_type: "overdue_11pm", // adheres to database constraint while email has custom urgent body
+      };
+      await supabase.from("notification_logs").insert(dbLog);
+    } catch (e) {
+      console.error("Failed to insert notification log into Supabase:", e);
+    }
+
+    const adminUser = this.getUserByEmail(cleanAdminEmail);
+    const adminId = adminUser?.id || "00000000-0000-0000-0000-000000000001";
+    this.logAudit(adminId, cleanAdminEmail, "ADMIN_UNRETURNED_REMINDER_SENT", issue.id, "equipment_issue", {
+      studentEmail: issue.user_email,
+      studentName: issue.user_name,
+      equipment: `${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`,
+      deliveryStatus: emailLog.delivery_status,
+      subject: emailLog.subject,
+    });
+
+    return { success: true, emailLog };
+  }
+
+  // --- Queries ---
+  public async getAllIssues(): Promise<EquipmentIssue[]> {
+    try {
+      const { data, error } = await supabase
+        .from("equipment_issues")
+        .select("*")
+        .order("issue_timestamp", { ascending: false });
+      if (data && !error && data.length > 0) {
+        data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+      }
+    } catch {}
     return Array.from(this.issues.values()).sort(
       (a, b) => new Date(b.issue_timestamp).getTime() - new Date(a.issue_timestamp).getTime()
     );
   }
 
-  public getDamageReports(): DamageReport[] {
-    safeRun(
-      supabase.from("damage_reports").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
-        }
-      })
-    );
+  public async getDamageReports(): Promise<DamageReport[]> {
+    try {
+      const { data, error } = await supabase
+        .from("damage_reports")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (data && !error && data.length > 0) {
+        data.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
+      }
+    } catch {}
     return Array.from(this.damageReports.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
 
-  public getAuditLogs(): AuditLog[] {
-    safeRun(
-      supabase.from("audit_logs").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((a) => this.auditLogs.set(a.id, a as AuditLog));
-        }
-      })
-    );
+  public async getAuditLogs(): Promise<AuditLog[]> {
+    try {
+      const { data, error } = await supabase
+        .from("audit_logs")
+        .select("*")
+        .order("timestamp", { ascending: false });
+      if (data && !error && data.length > 0) {
+        data.forEach((a) => this.auditLogs.set(a.id, a as AuditLog));
+      }
+    } catch {}
     return Array.from(this.auditLogs.values()).sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
   }
 
-  public getNotificationLogs(): NotificationLog[] {
-    safeRun(
-      supabase.from("notification_logs").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((n) => this.notificationLogs.set(n.id, n as NotificationLog));
-        }
-      })
-    );
+  public async getNotificationLogs(): Promise<NotificationLog[]> {
+    try {
+      const { data, error } = await supabase
+        .from("notification_logs")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (data && !error && data.length > 0) {
+        data.forEach((n) => this.notificationLogs.set(n.id, n as NotificationLog));
+      }
+    } catch {}
     return Array.from(this.notificationLogs.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
 
-  public getVerificationEvents(): ReturnVerificationEvent[] {
-    safeRun(
-      supabase.from("return_verification_events").select("*").then(({ data }) => {
-        if (data && data.length > 0) {
-          data.forEach((v) => this.verificationEvents.set(v.id, v as ReturnVerificationEvent));
-        }
-      })
-    );
+  public async getVerificationEvents(): Promise<ReturnVerificationEvent[]> {
+    try {
+      const { data, error } = await supabase
+        .from("return_verification_events")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (data && !error && data.length > 0) {
+        data.forEach((v) => this.verificationEvents.set(v.id, v as ReturnVerificationEvent));
+      }
+    } catch {}
     return Array.from(this.verificationEvents.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );

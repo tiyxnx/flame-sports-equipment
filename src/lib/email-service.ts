@@ -148,6 +148,30 @@ Department of Sports
 FLAME University`,
       };
 
+    case "admin_unreturned_reminder":
+      return {
+        subject: `URGENT: Sports Equipment Not Returned — ${sportName} ${equipmentTypeName} #${equipmentNumber}`,
+        body: `Dear ${recipientName || "Student"},
+
+This is an official urgent notice from the FLAME University Sports Department administrator regarding the equipment issued under your account:
+
+• Sport: ${sportName}
+• Equipment: ${equipmentTypeName}
+• Equipment Number: ${equipmentNumber}
+• Issued At: ${issueDateTimeFormatted}
+• Return Deadline: 11:00 PM IST on ${issueDateFormatted}
+
+Our live equipment room records indicate that this equipment has NOT yet been returned and verified at the sports room counter.
+
+Please return this item immediately to the sports equipment room handler to clear your account and avoid replacement penalties or student account disciplinary holds.
+
+If you have already deposited this equipment at the counter, please report to the equipment room handler immediately so your physical return can be verified in the portal.
+
+Regards,
+Department of Sports
+FLAME University, Pune`,
+      };
+
     default:
       return {
         subject: "Notification — FLAME Sports Equipment Room",

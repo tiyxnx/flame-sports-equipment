@@ -56,7 +56,7 @@ async function runTests() {
 
   // 2. Issuing Equipment & One-Issue Rule
   console.log("\n--- 2. Equipment Issuing & One-Active-Issue Rule ---");
-  const availableRackets = dbStore.getAvailableItems("s-badminton", "eq-badminton-racket");
+  const availableRackets = await dbStore.getAvailableItems("s-badminton", "eq-badminton-racket");
   assert(availableRackets.length > 0, "Available badminton rackets found in inventory");
 
   const chosenRacket = availableRackets[0];
@@ -90,7 +90,7 @@ async function runTests() {
 
   // 4. Student Return Submission
   console.log("\n--- 4. Student Return Submission ---");
-  const activeIssue = dbStore.getActiveIssueForUser(studentAuth.user.id);
+  const activeIssue = await dbStore.getActiveIssueForUser(studentAuth.user.id);
   assert(activeIssue !== null, "Active issue found for Priya Nair");
 
   // Attempt return without mandatory acknowledgement
@@ -129,7 +129,7 @@ async function runTests() {
 
   // 5. Administrator Action 1: Confirm Return
   console.log("\n--- 5. Administrator Mandatory Action 1: Confirm Return ---");
-  const confirmResult = dbStore.confirmPhysicalReturn({
+  const confirmResult = await dbStore.confirmPhysicalReturn({
     issueId: activeIssue!.id,
     adminId: adminAuth.user.id,
     notes: "Item verified intact and placed back in circulation.",
@@ -151,7 +151,7 @@ async function runTests() {
 
   // 6. Administrator Action 2: Not Returned
   console.log("\n--- 6. Administrator Mandatory Action 2: Not Returned ---");
-  const notReturnedResult = dbStore.markNotReturned({
+  const notReturnedResult = await dbStore.markNotReturned({
     issueId: issueAfterConfirmed.issue!.id,
     adminId: adminAuth.user.id,
     notes: "Checked counter and shelves; item missing.",
@@ -205,7 +205,7 @@ async function runTests() {
   );
 
   // C. Physical return is confirmed for Priya's issue, but item remains damaged pending repair
-  dbStore.confirmPhysicalReturn({
+  await dbStore.confirmPhysicalReturn({
     issueId: issueAfterConfirmed.issue!.id,
     adminId: adminAuth.user.id,
     notes: "Damaged item physically received at counter for repair.",
@@ -221,7 +221,7 @@ async function runTests() {
   assert(restoreResult.success, "Admin successfully restores damaged item to available");
 
   // D. Verify inventory reflects 'available'
-  const invAfterRestore = dbStore.getInventory();
+  const invAfterRestore = await dbStore.getInventory();
   const restoredItem = invAfterRestore.find((i) => i.id === secondRacket.id);
   assert(restoredItem?.status === "available", "Inventory accurately reflects restored item as available");
 
@@ -234,7 +234,7 @@ async function runTests() {
   assert(!rohanIssue.error, "Student successfully issues previously restored item");
 
   // F. Verify inventory immediately reflects 'issued' (NOT available)
-  const invAfterRohanIssue = dbStore.getInventory();
+  const invAfterRohanIssue = await dbStore.getInventory();
   const issuedItemInInv = invAfterRohanIssue.find((i) => i.id === secondRacket.id);
   assert(
     issuedItemInInv?.status === "issued",
@@ -252,7 +252,23 @@ async function runTests() {
     "Simultaneous issue of the same physical item is strictly blocked"
   );
 
-  // H. Rohan returns equipment using only issueId and email (testing fallback auth)
+  // H. Admin 1-Click Reminder for Unreturned Equipment (Rohan has not returned yet)
+  console.log("\n--- 10. Administrator 1-Click Reminder for Unreturned Equipment ---");
+  const reminderSendResult = await dbStore.sendAdminReminder({
+    issueId: rohanIssue.issue!.id,
+    adminEmail: adminAuth.user.email,
+  });
+  assert(
+    reminderSendResult.success && Boolean(reminderSendResult.emailLog),
+    "1-Click pre-drafted return notice email dispatched successfully for unreturned item"
+  );
+  assert(
+    reminderSendResult.emailLog?.recipient_email === secondStudentAuth.user.email &&
+      Boolean(reminderSendResult.emailLog?.subject.includes("URGENT: Sports Equipment Not Returned")),
+    "Pre-drafted email template correctly includes student address and urgent return subject"
+  );
+
+  // I. Rohan returns equipment using only issueId and email (testing fallback auth)
   const returnWithEmailFallback = await dbStore.submitReturn({
     userEmail: "rohan.joshi@flame.edu.in",
     issueId: rohanIssue.issue!.id,
@@ -264,8 +280,8 @@ async function runTests() {
     "Return submission with email fallback succeeds without 'Unauthenticated user' error"
   );
 
-  // I. Admin confirms return
-  const finalConfirm = dbStore.confirmPhysicalReturn({
+  // J. Admin confirms return
+  const finalConfirm = await dbStore.confirmPhysicalReturn({
     issueId: rohanIssue.issue!.id,
     adminId: adminAuth.user.id,
   });

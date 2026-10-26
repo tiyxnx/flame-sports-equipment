@@ -18,7 +18,10 @@ import {
   Send,
   Eye,
   Info,
+  Mail,
+  RotateCcw,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase/client";
 
 interface AdminDashboardProps {
   adminUser: User;
@@ -57,6 +60,10 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
   const [damageDescription, setDamageDescription] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(true);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>("");
+  const [sendEmailOnNotReturned, setSendEmailOnNotReturned] = useState<boolean>(true);
 
   // Inventory Add Modal
   const [showAddInventoryModal, setShowAddInventoryModal] = useState<boolean>(false);
@@ -122,12 +129,94 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     }
   }, [adminUser.email]);
 
+  // Full Realtime synchronization + 10s auto-refresh fallback
   useEffect(() => {
     fetchIssuesData();
     fetchInventoryData();
     fetchAuditData();
     fetchNotificationsData();
+    setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+
+    const channel = supabase
+      .channel("admin-realtime-dashboard")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "equipment_issues" },
+        () => {
+          fetchIssuesData();
+          fetchInventoryData();
+          setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "inventory_items" },
+        () => {
+          fetchInventoryData();
+          fetchIssuesData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "return_verification_events" },
+        () => {
+          fetchIssuesData();
+          fetchAuditData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "damage_reports" },
+        () => {
+          fetchInventoryData();
+          fetchAuditData();
+        }
+      )
+      .subscribe((status) => {
+        setIsRealtimeConnected(status === "SUBSCRIBED");
+      });
+
+    const interval = setInterval(() => {
+      fetchIssuesData();
+      fetchInventoryData();
+      fetchAuditData();
+      fetchNotificationsData();
+      setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+    }, 10000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [fetchIssuesData, fetchInventoryData, fetchAuditData, fetchNotificationsData]);
+
+  // 1-Click Instant Pre-Drafted Return Reminder Email
+  const handleSendReminder = async (issue: EquipmentIssue) => {
+    setSendingReminderId(issue.id);
+    try {
+      const res = await fetch("/api/admin/issues/send-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminEmail: adminUser.email,
+          issueId: issue.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Pre-drafted return reminder email dispatched to ${issue.user_email}!`);
+        fetchNotificationsData();
+        fetchAuditData();
+      } else {
+        showToast(data.error || "Failed to send reminder email.");
+      }
+    } catch {
+      showToast("Network error dispatching reminder email.");
+    } finally {
+      setSendingReminderId(null);
+    }
+  };
 
   // Execute Action 1: Confirm Return
   const handleConfirmReturn = async () => {
@@ -169,11 +258,12 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     setActionLoading(true);
 
     try {
+      const targetIssueId = selectedIssueForAction.id;
       const res = await fetch("/api/admin/issues/not-returned", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          issueId: selectedIssueForAction.id,
+          issueId: targetIssueId,
           adminId: adminUser.id,
           adminEmail: adminUser.email,
           notes: actionNotes,
@@ -182,10 +272,21 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
 
       const data = await res.json();
       if (res.ok) {
-        showToast("Recorded as Not Returned. Item remains unavailable and issue active.");
+        if (sendEmailOnNotReturned) {
+          fetch("/api/admin/issues/send-reminder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              adminEmail: adminUser.email,
+              issueId: targetIssueId,
+            }),
+          }).catch(() => {});
+        }
+        showToast("Recorded as Not Returned. Outstanding issue preserved and student notice dispatched.");
         closeModal();
         fetchIssuesData();
         fetchAuditData();
+        fetchNotificationsData();
       } else {
         showToast(data.error || "Failed to update status.");
       }
@@ -352,12 +453,49 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
             Sports Inventory &amp; Issue Management
           </h2>
           <p className="text-xs text-slate-500">
-            Logged in as {adminUser.email} (Asmi Malushte)
+            Logged in as {adminUser.email} ({adminUser.name || "Administrator"})
           </p>
         </div>
 
-        {/* Quick Action Buttons */}
+        {/* Quick Action Buttons & Real-Time Sync Indicator */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Real-time sync badge */}
+          <div
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[11px] font-bold transition shadow-2xs ${
+              isRealtimeConnected
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-amber-50 border-amber-200 text-amber-800"
+            }`}
+            title="Real-time Supabase database listener active (auto-syncs every 10s)"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>Live Sync</span>
+            {lastSyncedTime && (
+              <span className="text-[10px] text-slate-500 font-normal hidden sm:inline">
+                ({lastSyncedTime})
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              fetchIssuesData();
+              fetchInventoryData();
+              fetchAuditData();
+              fetchNotificationsData();
+              setLastSyncedTime(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+              showToast("Dashboard synchronized with live database.");
+            }}
+            title="Force refresh all data now"
+            className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition border border-slate-200"
+          >
+            <RotateCcw className={`w-4 h-4 ${loading ? "animate-spin text-red-600" : ""}`} />
+          </button>
+
           <button
             type="button"
             onClick={trigger10PmReminders}
@@ -494,59 +632,148 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
       {activeTab === "issues" && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden space-y-4">
           {/* Filters Bar */}
-          <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2.5 flex-1 max-w-xl">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="Search by student, email, equipment, or #number..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-800"
-                />
+          <div className="p-4 bg-slate-50/70 border-b border-slate-200 space-y-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5 flex-1 max-w-xl">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search by student, email, equipment, or #number..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 text-slate-800"
+                  />
+                </div>
+
+                {/* Status Filter */}
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="py-2 px-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 font-medium focus:outline-none"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="unreturned_all">⚠️ All Unreturned &amp; Overdue</option>
+                  <option value="issued">Currently Issued</option>
+                  <option value="return_submitted">Return Submitted (Pending Check)</option>
+                  <option value="overdue">Overdue (Past 11 PM)</option>
+                  <option value="not_returned">Not Returned (Checked &amp; Missing)</option>
+                  <option value="returned">Returned &amp; Confirmed</option>
+                </select>
+
+                {/* Sport Filter */}
+                <select
+                  value={sportFilter}
+                  onChange={(e) => setSportFilter(e.target.value)}
+                  className="py-2 px-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 font-medium focus:outline-none"
+                >
+                  <option value="all">All Sports</option>
+                  <option value="s-badminton">Badminton</option>
+                  <option value="s-football">Football</option>
+                  <option value="s-basketball">Basketball</option>
+                  <option value="s-cricket">Cricket</option>
+                  <option value="s-volleyball">Volleyball</option>
+                  <option value="s-tennis">Tennis</option>
+                  <option value="s-pickleball">Pickleball</option>
+                </select>
               </div>
 
-              {/* Status Filter */}
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="py-2 px-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 font-medium focus:outline-none"
+              <button
+                type="button"
+                onClick={fetchIssuesData}
+                className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl transition"
+                title="Refresh table"
               >
-                <option value="all">All Statuses</option>
-                <option value="issued">Currently Issued</option>
-                <option value="return_submitted">Return Submitted (Pending Check)</option>
-                <option value="overdue">Overdue (Past 11 PM)</option>
-                <option value="not_returned">Not Returned (Checked & Missing)</option>
-                <option value="returned">Returned & Confirmed</option>
-              </select>
-
-              {/* Sport Filter */}
-              <select
-                value={sportFilter}
-                onChange={(e) => setSportFilter(e.target.value)}
-                className="py-2 px-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 font-medium focus:outline-none"
-              >
-                <option value="all">All Sports</option>
-                <option value="s-badminton">Badminton</option>
-                <option value="s-football">Football</option>
-                <option value="s-basketball">Basketball</option>
-                <option value="s-cricket">Cricket</option>
-                <option value="s-volleyball">Volleyball</option>
-                <option value="s-tennis">Tennis</option>
-                <option value="s-pickleball">Pickleball</option>
-              </select>
+                <RefreshCw className="w-4 h-4" />
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={fetchIssuesData}
-              className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl transition"
-              title="Refresh table"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+            {/* Quick Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/60">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                  statusFilter === "all"
+                    ? "bg-[#0B2545] text-white shadow-2xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                All Issues ({issues.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("unreturned_all")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                  statusFilter === "unreturned_all"
+                    ? "bg-red-600 text-white shadow-2xs ring-2 ring-red-300"
+                    : "bg-red-50 text-red-700 hover:bg-red-100 border border-red-200"
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Unreturned &amp; Overdue ({issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("return_submitted")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                  statusFilter === "return_submitted"
+                    ? "bg-amber-600 text-white shadow-2xs"
+                    : "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
+                }`}
+              >
+                Pending Return Check ({metrics.pendingReturnConfirmations})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("issued")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                  statusFilter === "issued"
+                    ? "bg-blue-600 text-white shadow-2xs"
+                    : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
+                }`}
+              >
+                Currently Issued ({metrics.currentlyIssued})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("returned")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                  statusFilter === "returned"
+                    ? "bg-emerald-600 text-white shadow-2xs"
+                    : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200"
+                }`}
+              >
+                Confirmed Returned
+              </button>
+            </div>
           </div>
+
+          {/* Unreturned Alert Banner */}
+          {issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length > 0 && (
+            <div className="mx-4 p-3 bg-red-50 border border-red-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-red-900 shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-600 text-white flex items-center justify-center font-bold shrink-0 shadow-2xs">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-red-950">
+                    {issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)).length} Equipment Item(s) Awaiting Physical Return
+                  </p>
+                  <p className="text-[11px] text-red-700">
+                    Active students currently have equipment checked out. Click <strong>&quot;Send Reminder Email&quot;</strong> on any row below to dispatch the official return notice immediately.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStatusFilter(statusFilter === "unreturned_all" ? "all" : "unreturned_all")}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-xs transition shrink-0 shadow-2xs"
+              >
+                {statusFilter === "unreturned_all" ? "Show All Issues" : "Filter Unreturned Items"}
+              </button>
+            </div>
+          )}
 
           {/* Table */}
           <div className="overflow-x-auto">
@@ -700,6 +927,18 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
                                 title="Report damage on this equipment"
                               >
                                 <AlertTriangle className="w-3.5 h-3.5" /> Report Damage
+                              </button>
+
+                              {/* Action 4: 1-Click Pre-Drafted Reminder Email */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendReminder(iss)}
+                                disabled={sendingReminderId === iss.id}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold shadow-sm transition disabled:opacity-50"
+                                title={`1-Click dispatch pre-drafted return notice email to ${iss.user_email}`}
+                              >
+                                <Mail className="w-3.5 h-3.5" />
+                                {sendingReminderId === iss.id ? "Sending..." : "Send Reminder Email"}
                               </button>
                             </div>
                           ) : (
@@ -1096,6 +1335,16 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
                 className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
+
+            <label className="flex items-center gap-2.5 text-xs text-amber-950 font-semibold cursor-pointer select-none bg-amber-50/70 p-3 rounded-xl border border-amber-200">
+              <input
+                type="checkbox"
+                checked={sendEmailOnNotReturned}
+                onChange={(e) => setSendEmailOnNotReturned(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+              />
+              <span>Also dispatch pre-drafted unreturned notice email to student immediately</span>
+            </label>
 
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

@@ -21,7 +21,11 @@ export async function GET(req: NextRequest) {
     }
 
     if (status && status !== "all") {
-      issues = issues.filter((i) => i.status === status);
+      if (status === "unreturned_all") {
+        issues = issues.filter((i) => ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status));
+      } else {
+        issues = issues.filter((i) => i.status === status);
+      }
     }
 
     if (search) {
