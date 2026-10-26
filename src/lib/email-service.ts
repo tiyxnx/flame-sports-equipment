@@ -168,7 +168,7 @@ export async function sendEmailNotification(params: SendEmailParams): Promise<No
   let errorMessage: string | null = null;
 
   const resendApiKey = process.env.RESEND_API_KEY;
-  const senderEmail = process.env.RESEND_FROM_EMAIL || "sports@flame.edu.in";
+  const senderEmail = process.env.RESEND_FROM_EMAIL || "FLAME Sports <onboarding@resend.dev>";
 
   if (resendApiKey) {
     try {
