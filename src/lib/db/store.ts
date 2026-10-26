@@ -231,7 +231,43 @@ class HybridDataStore {
       })
     );
 
-    return Array.from(this.inventory.values()).sort((a, b) => {
+    // Cross-reference with active issues (if an item is currently issued, it is NOT available)
+    const activeIssuesByItem = new Map<string, EquipmentIssue>();
+    for (const iss of this.issues.values()) {
+      if (["issued", "return_submitted", "overdue", "not_returned"].includes(iss.status)) {
+        activeIssuesByItem.set(iss.inventory_item_id, iss);
+      }
+    }
+
+    // Cross-reference with active damage reports
+    const damagedItemIds = new Set<string>();
+    for (const dmg of this.damageReports.values()) {
+      if (dmg.resolution_status === "pending") {
+        damagedItemIds.add(dmg.inventory_item_id);
+      }
+    }
+
+    return Array.from(this.inventory.values()).map((item) => {
+      let realStatus = item.status;
+      if (damagedItemIds.has(item.id)) {
+        realStatus = "damaged";
+      } else if (activeIssuesByItem.has(item.id)) {
+        const active = activeIssuesByItem.get(item.id)!;
+        realStatus = active.status === "return_submitted" ? "return_submitted" : "issued";
+      } else if (item.status === "issued" || item.status === "return_submitted") {
+        realStatus = "available";
+      }
+
+      if (item.status !== realStatus) {
+        item.status = realStatus;
+        this.inventory.set(item.id, item);
+      }
+
+      return {
+        ...item,
+        status: realStatus,
+      };
+    }).sort((a, b) => {
       if (a.sport_name === b.sport_name) {
         return a.equipment_number.localeCompare(b.equipment_number, undefined, { numeric: true });
       }
@@ -240,7 +276,8 @@ class HybridDataStore {
   }
 
   public getAvailableItems(sportId: string, equipmentTypeId: string): InventoryItem[] {
-    return Array.from(this.inventory.values()).filter(
+    const inv = this.getInventory();
+    return inv.filter(
       (item) =>
         item.sport_id === sportId &&
         item.equipment_type_id === equipmentTypeId &&
@@ -379,13 +416,22 @@ class HybridDataStore {
     userName?: string;
     inventoryItemId: string;
   }): Promise<{ issue?: EquipmentIssue; error?: string }> {
+    const cleanEmail = (params.userEmail || "").trim().toLowerCase();
     let user = params.userId ? this.getUserById(params.userId) : undefined;
-    if (!user && params.userEmail) {
-      user = this.getUserByEmail(params.userEmail);
+    if (!user && cleanEmail) {
+      user = this.getUserByEmail(cleanEmail);
     }
-    if (!user && params.userEmail && params.userEmail.endsWith(FLAME_DOMAIN)) {
-      const authRes = this.authenticateUser(params.userEmail, params.userName);
+    if (!user && cleanEmail.endsWith(FLAME_DOMAIN)) {
+      const authRes = this.authenticateUser(cleanEmail, params.userName);
       user = authRes.user;
+    }
+    if (!user && params.userId) {
+      try {
+        const { data: su } = await supabase.from("users").select("*").eq("id", params.userId).maybeSingle();
+        if (su && su.email.toLowerCase().endsWith(FLAME_DOMAIN)) {
+          user = this.authenticateUser(su.email, su.name).user;
+        }
+      } catch {}
     }
     if (!user) {
       return { error: "User not found or unauthenticated." };
@@ -476,16 +522,7 @@ class HybridDataStore {
     damageReported?: boolean;
     damageDescription?: string;
   }): Promise<{ issue?: EquipmentIssue; error?: string }> {
-    let user = params.userId ? this.getUserById(params.userId) : undefined;
-    if (!user && params.userEmail) {
-      user = this.getUserByEmail(params.userEmail);
-    }
-    if (!user && params.userEmail && params.userEmail.endsWith(FLAME_DOMAIN)) {
-      const authRes = this.authenticateUser(params.userEmail);
-      user = authRes.user;
-    }
-    if (!user) return { error: "Unauthenticated user." };
-
+    // 1. Fetch issue record first to know item and owner
     let issue = this.issues.get(params.issueId);
     if (!issue) {
       try {
@@ -497,6 +534,36 @@ class HybridDataStore {
       } catch {}
     }
     if (!issue) return { error: "Issue record not found." };
+
+    // 2. Resolve user safely
+    const cleanEmail = (params.userEmail || "").trim().toLowerCase();
+    let user = params.userId ? this.getUserById(params.userId) : undefined;
+    if (!user && cleanEmail) {
+      user = this.getUserByEmail(cleanEmail);
+    }
+    if (!user && cleanEmail.endsWith(FLAME_DOMAIN)) {
+      const authRes = this.authenticateUser(cleanEmail);
+      user = authRes.user;
+    }
+    // If not found yet, but this issue belongs to this user ID or email:
+    if (!user && (params.userId === issue.user_id || (cleanEmail && cleanEmail === issue.user_email.toLowerCase()))) {
+      user = this.authenticateUser(issue.user_email, issue.user_name).user;
+    }
+    // If only userId was passed and matches issue.user_id:
+    if (!user && params.userId && params.userId === issue.user_id) {
+      user = this.authenticateUser(issue.user_email, issue.user_name).user;
+    }
+    // Fallback: check Supabase users table
+    if (!user && params.userId) {
+      try {
+        const { data: su } = await supabase.from("users").select("*").eq("id", params.userId).maybeSingle();
+        if (su && su.email.toLowerCase().endsWith(FLAME_DOMAIN)) {
+          user = this.authenticateUser(su.email, su.name).user;
+        }
+      } catch {}
+    }
+
+    if (!user) return { error: "Unauthenticated user." };
 
     if (issue.user_id !== user.id && issue.user_email.toLowerCase() !== user.email.toLowerCase()) {
       return { error: "Security violation: You can only return equipment issued under your own name." };
