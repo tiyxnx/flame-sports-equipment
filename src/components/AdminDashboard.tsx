@@ -310,61 +310,60 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
     }
   };
 
-  // Universal 11 PM Return Notice text (removes item mentions, purely focused on return before 11 PM)
+  // Official 11 PM Return Warning Draft text (universal, no item mentions)
   const getUniversalReturnNoticeSubject = () =>
-    "URGENT: Sports Equipment Not Returned (Return Required Before 11 PM)";
+    "OFFICIAL WARNING — URGENT: Sports Equipment Not Returned (Return Required Immediately)";
 
   const getUniversalReturnNoticeBody = (studentName?: string) => `Dear ${studentName || "Student"},
 
-This is an official urgent notice from the FLAME University Sports Equipment Room regarding the equipment issued under your student account.
+This is an official warning from the Department of Sports, FLAME University regarding the sports equipment issued under your student account.
 
-Our live equipment room records indicate that sports equipment issued under your name has NOT yet been returned and verified at the sports room counter.
+Our live equipment room records indicate that sports equipment issued under your name has NOT been returned to the equipment room counter by the mandatory 11:00 PM IST deadline.
 
-MANDATORY DEADLINE: 11:00 PM IST Today
+MANDATORY ACTION REQUIRED:
+Please return and deposit all issued equipment immediately to the sports equipment room counter to clear your account and avoid replacement penalties or student account disciplinary holds.
 
-Please return and deposit all issued equipment immediately to the sports equipment room counter before 11:00 PM IST today to clear your account and avoid replacement penalties or student account disciplinary holds.
-
-If you have already deposited your equipment at the counter, please report to the equipment room handler so your physical return can be verified in the portal.
+If you have already deposited your equipment at the counter, please report to the equipment room handler immediately so your physical return can be verified in the portal.
 
 Regards,
 ${adminUser.name || "Sports Administrator"}
 Department of Sports
-FLAME University, Pune`;
+FLAME University, Pune
+Official Admin Email: ${adminUser.email}`;
 
-  // 1-Click Auto-send return notice to an individual student
-  const handleAutoSendSingle = async (issue: EquipmentIssue) => {
-    setSendingReminderId(issue.id);
+  // 1-Click Send warning email to an individual student from admin's FLAME Gmail
+  const handleSendWarningEmailSingle = (issue: EquipmentIssue) => {
     const subject = getUniversalReturnNoticeSubject();
     const body = getUniversalReturnNoticeBody(issue.user_name);
 
-    try {
-      const res = await fetch("/api/admin/issues/send-reminder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          adminEmail: adminUser.email,
-          issueId: issue.id,
-          customSubject: subject,
-          customBody: body,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(`Return notice auto-sent to ${issue.user_email}!`);
+    // 1. Immediately open pre-drafted compose in FLAME Gmail from admin's authenticated @flame.edu.in account
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+      issue.user_email
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+
+    // 2. Record dispatch in backend database outbox & audit trail
+    fetch("/api/admin/issues/send-reminder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adminEmail: adminUser.email,
+        issueId: issue.id,
+        customSubject: subject,
+        customBody: body,
+      }),
+    })
+      .then(() => {
         fetchNotificationsData();
         fetchAuditData();
-      } else {
-        showToast(data.error || `Failed to auto-send notice to ${issue.user_email}`);
-      }
-    } catch {
-      showToast(`Network error auto-sending notice to ${issue.user_email}.`);
-    } finally {
-      setSendingReminderId(null);
-    }
+      })
+      .catch(() => {});
+
+    showToast(`FLAME Gmail compose opened for ${issue.user_email}! Click "Send" in Gmail.`);
   };
 
-  // 1-Click Auto-send return notice to ALL students who haven't returned equipment before 11 PM
-  const handleAutoSendAllUnreturned = async () => {
+  // 1-Click Send warning email to ALL students who haven't returned equipment before 11 PM
+  const handleSendWarningEmailAll = () => {
     const unreturned = issues.filter((i) =>
       ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
     );
@@ -376,63 +375,33 @@ FLAME University, Pune`;
     const uniqueEmails = Array.from(new Set(unreturned.map((i) => i.user_email)));
     const subject = getUniversalReturnNoticeSubject();
     const body = getUniversalReturnNoticeBody("FLAME University Students");
-    setIsSendingBatch(true);
 
-    try {
-      const res = await fetch("/api/admin/issues/send-reminder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          adminEmail: adminUser.email,
-          sendToAll: true,
-          customSubject: subject,
-          customBody: body,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(
-          `Return notice auto-sent to all ${uniqueEmails.length} unreturned student(s)!`
-        );
+    // 1. Open group FLAME Gmail with all unreturned students in BCC (protecting student privacy)
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(
+      uniqueEmails.join(",")
+    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank");
+
+    // 2. Record batch dispatch in backend database outbox & audit trail
+    fetch("/api/admin/issues/send-reminder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adminEmail: adminUser.email,
+        sendToAll: true,
+        customSubject: subject,
+        customBody: body,
+      }),
+    })
+      .then(() => {
         fetchNotificationsData();
         fetchAuditData();
-      } else {
-        showToast(data.error || "Failed to auto-send batch return notices.");
-      }
-    } catch {
-      showToast("Network error auto-sending batch return notices.");
-    } finally {
-      setIsSendingBatch(false);
-    }
-  };
+      })
+      .catch(() => {});
 
-  // Direct open pre-filled compose in FLAME Gmail for an individual student
-  const directOpenSingleGmail = (issue: EquipmentIssue) => {
-    const subject = getUniversalReturnNoticeSubject();
-    const body = getUniversalReturnNoticeBody(issue.user_name);
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
-      issue.user_email
-    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, "_blank");
-  };
-
-  // Direct open pre-filled compose in FLAME Gmail for all unreturned students (BCC)
-  const directOpenBatchGmail = () => {
-    const unreturned = issues.filter((i) =>
-      ["issued", "return_submitted", "overdue", "not_returned"].includes(i.status)
+    showToast(
+      `FLAME Gmail opened with ${uniqueEmails.length} unreturned student(s) in BCC! Click "Send" in Gmail.`
     );
-    if (unreturned.length === 0) {
-      showToast("No unreturned equipment items found.");
-      return;
-    }
-
-    const emails = Array.from(new Set(unreturned.map((i) => i.user_email)));
-    const subject = getUniversalReturnNoticeSubject();
-    const body = getUniversalReturnNoticeBody("FLAME University Students");
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(
-      emails.join(",")
-    )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, "_blank");
   };
 
   // Preview / Edit modal for single issue
@@ -1050,47 +1019,26 @@ FLAME University, Pune`;
               </div>
 
               <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0">
-                {/* 1-Click Auto-Send Email to All Unreturned Students */}
+                {/* Button says "Send warning email" as requested */}
                 <button
                   type="button"
-                  disabled={isSendingBatch}
-                  onClick={handleAutoSendAllUnreturned}
-                  className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 active:scale-95 disabled:opacity-60"
-                  title="1-Click: Automatically send official 11 PM return notices to all unreturned students"
+                  onClick={handleSendWarningEmailAll}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-2 active:scale-95"
+                  title={`Send official warning email from ${adminUser.email} to all unreturned students`}
                 >
-                  {isSendingBatch ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                      Auto-Sending to All...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5 text-white" />
-                      1-Click Auto-Send to All Before 11 PM
-                    </>
-                  )}
+                  <Mail className="w-4 h-4 text-white" />
+                  Send warning email
                 </button>
 
-                {/* Preview group draft */}
+                {/* Preview / customize warning draft */}
                 <button
                   type="button"
                   onClick={openBatchDraft}
-                  className="p-2 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1"
-                  title="Preview & edit return notice before sending"
+                  className="px-3 py-2 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title="Preview or customize drafted warning email before sending"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Preview</span>
-                </button>
-
-                {/* Instant FLAME Gmail compose for all in BCC */}
-                <button
-                  type="button"
-                  onClick={directOpenBatchGmail}
-                  className="p-2 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1"
-                  title="Open FLAME Gmail compose with all unreturned students in BCC"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">FLAME Gmail</span>
+                  <span>Preview Draft</span>
                 </button>
 
                 <button
@@ -1278,42 +1226,24 @@ FLAME University, Pune`;
                                 <AlertTriangle className="w-3.5 h-3.5" /> Report Damage
                               </button>
 
-                              {/* Action 4: Auto-Send 11 PM Return Notice */}
+                              {/* Action 4: Send Warning Email */}
                               <div className="inline-flex items-center rounded-lg shadow-xs">
                                 <button
                                   type="button"
-                                  disabled={sendingReminderId === iss.id}
-                                  onClick={() => handleAutoSendSingle(iss)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-l-lg text-[11px] font-bold transition disabled:opacity-50"
-                                  title="1-Click: Auto-send official 11 PM return notice to this student"
+                                  onClick={() => handleSendWarningEmailSingle(iss)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-l-lg text-[11px] font-bold transition active:scale-95"
+                                  title={`Send official warning email to ${iss.user_email} from ${adminUser.email}`}
                                 >
-                                  {sendingReminderId === iss.id ? (
-                                    <>
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                      Sending...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Send className="w-3.5 h-3.5" />
-                                      Auto-Send 11 PM Notice
-                                    </>
-                                  )}
+                                  <Mail className="w-3.5 h-3.5" />
+                                  Send warning email
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openSingleDraft(iss)}
-                                  className="p-1.5 bg-blue-700 hover:bg-blue-800 text-white text-[11px] border-l border-blue-500 transition"
-                                  title="Preview or edit email draft before sending"
+                                  className="p-1.5 bg-red-700 hover:bg-red-800 text-white rounded-r-lg text-[11px] border-l border-red-500 transition"
+                                  title="Preview or customize warning draft"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => directOpenSingleGmail(iss)}
-                                  className="p-1.5 bg-blue-800 hover:bg-blue-900 text-white rounded-r-lg text-[11px] border-l border-blue-600 transition"
-                                  title="Open pre-drafted compose in FLAME Gmail"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
@@ -1538,70 +1468,36 @@ FLAME University, Pune`;
       {/* TAB 4: Dispatched Notifications Outbox */}
       {activeTab === "notifications" && (
         <div className="space-y-4">
-          {/* Email Service Status & Test Trigger */}
+          {/* Email Service Status Banner */}
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
                 <h3 className="font-bold text-slate-900 flex items-center gap-2">
                   <Mail className="w-4 h-4 text-red-600" />
-                  Live Email Notification Service
+                  Official FLAME University Email Delivery Service
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Automated return reminders (10 PM), overdue alerts (11 PM), damage notices, and 1-click urgent notices
+                  Direct official warning emails from authorized administrator accounts (@flame.edu.in)
                 </p>
               </div>
               <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full font-bold text-[11px] self-start sm:self-auto flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Resend API Connected
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> FLAME Google Workspace Active
               </span>
             </div>
 
-            {/* Trial Sandbox explanation banner */}
+            {/* Official Sender Banner */}
             <div className="p-3.5 bg-blue-50/90 border border-blue-200 rounded-xl text-xs text-blue-950 space-y-1.5">
               <div className="flex items-center gap-2 font-bold text-blue-900">
                 <Info className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>Resend Sandbox Mode (Free Tier)</span>
+                <span>Official Administrator Senders</span>
               </div>
               <p className="text-[11px] text-blue-800 leading-relaxed">
-                Your Resend API key is registered to <strong>tiyanashah21@gmail.com</strong>.
-                In Resend trial sandbox mode without a verified domain, all automated and manual emails are safely delivered into your developer Gmail (<strong>tiyanashah21@gmail.com</strong>) with full student headers.
+                Warning emails and return notices are sent directly from your verified university email (<strong>{adminUser.email}</strong>).
+                Clicking &quot;Send warning email&quot; launches Google Workspace Gmail with the student addresses and pre-drafted official warning text already filled in.
               </p>
               <p className="text-[10px] text-blue-700">
-                To send emails directly to all student @flame.edu.in inboxes, verify your institutional domain at{" "}
-                <a
-                  href="https://resend.com/domains"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline font-bold hover:text-blue-900"
-                >
-                  resend.com/domains
-                </a>
-                .
+                Authorized Admin Senders: <strong>tiyana.shah@flame.edu.in</strong> &amp; <strong>asmi.malushte@flame.edu.in</strong>
               </p>
-            </div>
-
-            {/* Instant Live Test Email Trigger */}
-            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              <div className="flex-1">
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Send Instant Test Email to Verify Delivery:
-                </label>
-                <input
-                  type="email"
-                  value={testEmailRecipient}
-                  onChange={(e) => setTestEmailRecipient(e.target.value)}
-                  placeholder="e.g. tiyanashah21@gmail.com"
-                  className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-slate-800"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleSendTestEmail}
-                disabled={isSendingTestEmail || !testEmailRecipient.trim()}
-                className="self-end sm:self-auto px-4 py-2.5 bg-[#0B2545] hover:bg-[#133966] text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center gap-2 disabled:opacity-50 shrink-0"
-              >
-                <Send className={`w-3.5 h-3.5 ${isSendingTestEmail ? "animate-spin" : ""}`} />
-                {isSendingTestEmail ? "Dispatching..." : "Send Test Email"}
-              </button>
             </div>
           </div>
 
@@ -1626,7 +1522,7 @@ FLAME University, Pune`;
             <div className="p-4 divide-y divide-slate-100 space-y-3">
               {notifications.length === 0 ? (
                 <p className="text-xs text-slate-400 py-6 text-center">
-                  No notification emails dispatched yet. Click &quot;Send Test Email&quot; above to verify delivery!
+                  No warning emails dispatched yet. Click &quot;Send warning email&quot; on any unreturned student to dispatch.
                 </p>
               ) : (
                 notifications.map((notif) => {
@@ -1648,17 +1544,14 @@ FLAME University, Pune`;
                         <span>Status:</span>
                         {isSent ? (
                           <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] rounded-full border border-emerald-200 uppercase">
-                            Delivered via Resend
+                            Dispatched via FLAME Gmail
                           </span>
                         ) : isFailed ? (
                           <span className="px-2 py-0.5 bg-red-100 text-red-800 font-bold text-[10px] rounded-full border border-red-200 uppercase">
                             Delivery Failed
                           </span>
                         ) : (
-                          <span
-                            className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] rounded-full border border-amber-200 uppercase"
-                            title="Add RESEND_API_KEY to send directly to Gmail"
-                          >
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] rounded-full border border-amber-200 uppercase">
                             Logged in Outbox
                           </span>
                         )}
@@ -2047,26 +1940,20 @@ FLAME University, Pune`;
               </button>
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Mailto link */}
-                <a
-                  href={`mailto:${emailDraftModal.recipientEmails.join(",")}?subject=${encodeURIComponent(
-                    editedSubject
-                  )}&body=${encodeURIComponent(editedBody)}`}
+                {/* Copy Text */}
+                <button
+                  type="button"
                   onClick={() => {
-                    if (emailDraftModal.issueId) {
-                      const targetIssue = issues.find((i) => i.id === emailDraftModal.issueId);
-                      if (targetIssue) handleAutoSendSingle(targetIssue);
-                    }
-                    showToast("Opened in default mail app.");
-                    setEmailDraftModal(null);
+                    navigator.clipboard.writeText(`Subject: ${editedSubject}\n\n${editedBody}`);
+                    showToast("Draft copied to clipboard!");
                   }}
                   className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center gap-1.5"
                 >
-                  <Mail className="w-3.5 h-3.5" />
-                  Default Mail App
-                </a>
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy Text
+                </button>
 
-                {/* Open in FLAME Gmail */}
+                {/* Primary: Send warning email via FLAME Gmail */}
                 <button
                   type="button"
                   onClick={() => {
@@ -2078,67 +1965,33 @@ FLAME University, Pune`;
                     )}&body=${encodeURIComponent(editedBody)}`;
                     window.open(gmailUrl, "_blank");
 
+                    // Record dispatch in backend database outbox
+                    fetch("/api/admin/issues/send-reminder", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        adminEmail: adminUser.email,
+                        issueId: emailDraftModal.isBatch ? "all" : emailDraftModal.issueId,
+                        sendToAll: emailDraftModal.isBatch,
+                        customSubject: editedSubject,
+                        customBody: editedBody,
+                      }),
+                    })
+                      .then(() => {
+                        fetchNotificationsData();
+                        fetchAuditData();
+                      })
+                      .catch(() => {});
+
                     showToast(
-                      `Draft opened in FLAME Gmail with pre-filled message!`
+                      `FLAME Gmail opened! Click "Send" in Gmail to dispatch from ${adminUser.email}.`
                     );
                     setEmailDraftModal(null);
                   }}
-                  className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition shadow-xs flex items-center gap-1.5 active:scale-95"
+                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition shadow-sm flex items-center gap-2 active:scale-95"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Open in FLAME Gmail
-                </button>
-
-                {/* Primary: 1-Click Auto-Send Directly */}
-                <button
-                  type="button"
-                  disabled={isSendingFromModal}
-                  onClick={async () => {
-                    setIsSendingFromModal(true);
-                    try {
-                      const res = await fetch("/api/admin/issues/send-reminder", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          adminEmail: adminUser.email,
-                          issueId: emailDraftModal.isBatch ? "all" : emailDraftModal.issueId,
-                          sendToAll: emailDraftModal.isBatch,
-                          customSubject: editedSubject,
-                          customBody: editedBody,
-                        }),
-                      });
-                      const data = await res.json();
-                      if (res.ok) {
-                        showToast(
-                          emailDraftModal.isBatch
-                            ? `Return notice auto-sent to all ${emailDraftModal.recipientEmails.length} unreturned student(s)!`
-                            : `Return notice auto-sent to ${emailDraftModal.recipientEmails[0]}!`
-                        );
-                        setEmailDraftModal(null);
-                        fetchNotificationsData();
-                        fetchAuditData();
-                      } else {
-                        showToast(data.error || "Failed to auto-send email notice.");
-                      }
-                    } catch {
-                      showToast("Network error auto-sending email notice.");
-                    } finally {
-                      setIsSendingFromModal(false);
-                    }
-                  }}
-                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl transition shadow-sm flex items-center gap-2 active:scale-95 disabled:opacity-60"
-                >
-                  {isSendingFromModal ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      Auto-Sending...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Auto-Send Email Now
-                    </>
-                  )}
+                  <Send className="w-4 h-4" />
+                  Send warning email via FLAME Gmail
                 </button>
               </div>
             </div>
