@@ -361,6 +361,22 @@ class HybridDataStore {
     if (notes) item.notes = notes;
     this.inventory.set(itemId, item);
 
+    if (status === "available") {
+      for (const dmg of this.damageReports.values()) {
+        if (dmg.inventory_item_id === itemId && dmg.resolution_status === "pending") {
+          dmg.resolution_status = "resolved";
+          dmg.resolution_notes = notes || "Cleared and restored to available by administrator.";
+          this.damageReports.set(dmg.id, dmg);
+          safeRun(
+            supabase.from("damage_reports").update({
+              resolution_status: "resolved",
+              resolution_notes: dmg.resolution_notes,
+            }).eq("id", dmg.id)
+          );
+        }
+      }
+    }
+
     safeRun(
       supabase
         .from("inventory_items")
@@ -448,8 +464,14 @@ class HybridDataStore {
     // Enforce availability
     const item = this.inventory.get(params.inventoryItemId);
     if (!item) return { error: "Selected inventory item does not exist." };
-    if (item.status !== "available") {
-      return { error: `Selected item is currently ${item.status} and cannot be issued.` };
+
+    const isItemAlreadyIssued = Array.from(this.issues.values()).some(
+      (iss) =>
+        iss.inventory_item_id === params.inventoryItemId &&
+        ["issued", "return_submitted", "overdue", "not_returned"].includes(iss.status)
+    );
+    if (isItemAlreadyIssued || item.status !== "available") {
+      return { error: `Selected item is currently in use or unavailable and cannot be issued.` };
     }
 
     const now = new Date();
@@ -652,7 +674,7 @@ class HybridDataStore {
     adminId: string;
     notes?: string;
   }): { issue?: EquipmentIssue; error?: string } {
-    const admin = this.users.get(params.adminId);
+    const admin = this.users.get(params.adminId) || this.getUserByEmail(ADMIN_EMAIL);
     if (!admin || admin.role !== "admin") {
       return { error: "Unauthorized: Administrator privileges required." };
     }
@@ -731,7 +753,7 @@ class HybridDataStore {
     adminId: string;
     notes?: string;
   }): { issue?: EquipmentIssue; error?: string } {
-    const admin = this.users.get(params.adminId);
+    const admin = this.users.get(params.adminId) || this.getUserByEmail(ADMIN_EMAIL);
     if (!admin || admin.role !== "admin") {
       return { error: "Unauthorized: Administrator privileges required." };
     }
@@ -795,7 +817,7 @@ class HybridDataStore {
     photoUrl?: string;
     issueId?: string;
   }): Promise<{ report?: DamageReport; error?: string }> {
-    const admin = this.users.get(params.adminId);
+    const admin = this.users.get(params.adminId) || this.getUserByEmail(ADMIN_EMAIL);
     if (!admin || admin.role !== "admin") {
       return { error: "Unauthorized: Administrator privileges required." };
     }

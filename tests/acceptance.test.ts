@@ -173,7 +173,93 @@ async function runTests() {
     "11 PM IST overdue job executed idempotently"
   );
 
-  // 9. Summary
+  // 9. Real-Time Inventory & Authentication Fallback Edge-Case Tests
+  console.log("\n--- 9. Real-Time Inventory & Return Auth Fallback Tests ---");
+
+  // A. Authenticate a second student: Rohan Joshi
+  const secondStudentAuth = dbStore.authenticateUser("rohan.joshi@flame.edu.in", "Rohan Joshi");
+
+  // B. Attempt to issue the SAME item that is currently damaged (secondRacket) -> must be blocked
+  const issueDamagedResult = await dbStore.issueEquipment({
+    userId: secondStudentAuth.user.id,
+    inventoryItemId: secondRacket.id,
+  });
+  assert(
+    Boolean(issueDamagedResult.error),
+    "Damaged item cannot be issued to any student"
+  );
+
+  // C. Physical return is confirmed for Priya's issue, but item remains damaged pending repair
+  dbStore.confirmPhysicalReturn({
+    issueId: issueAfterConfirmed.issue!.id,
+    adminId: adminAuth.user.id,
+    notes: "Damaged item physically received at counter for repair.",
+  });
+
+  // D. Admin restores the damaged item to 'available' after repair
+  const restoreResult = dbStore.updateInventoryItemStatus(
+    secondRacket.id,
+    "available",
+    adminAuth.user.id,
+    "Repaired and inspected by sports staff"
+  );
+  assert(restoreResult.success, "Admin successfully restores damaged item to available");
+
+  // D. Verify inventory reflects 'available'
+  const invAfterRestore = dbStore.getInventory();
+  const restoredItem = invAfterRestore.find((i) => i.id === secondRacket.id);
+  assert(restoredItem?.status === "available", "Inventory accurately reflects restored item as available");
+
+  // E. Rohan Joshi issues the restored racket
+  const rohanIssue = await dbStore.issueEquipment({
+    userId: secondStudentAuth.user.id,
+    userEmail: secondStudentAuth.user.email,
+    inventoryItemId: secondRacket.id,
+  });
+  assert(!rohanIssue.error, "Student successfully issues previously restored item");
+
+  // F. Verify inventory immediately reflects 'issued' (NOT available)
+  const invAfterRohanIssue = dbStore.getInventory();
+  const issuedItemInInv = invAfterRohanIssue.find((i) => i.id === secondRacket.id);
+  assert(
+    issuedItemInInv?.status === "issued",
+    "Admin inventory accurately displays currently checked-out item as 'issued', NOT 'available'"
+  );
+
+  // G. Another student attempts to issue the SAME physical item -> must be blocked
+  const thirdStudentIssueSameItem = await dbStore.issueEquipment({
+    userId: studentAuth.user.id,
+    userEmail: studentAuth.user.email,
+    inventoryItemId: secondRacket.id,
+  });
+  assert(
+    Boolean(thirdStudentIssueSameItem.error),
+    "Simultaneous issue of the same physical item is strictly blocked"
+  );
+
+  // H. Rohan returns equipment using only issueId and email (testing fallback auth)
+  const returnWithEmailFallback = await dbStore.submitReturn({
+    userEmail: "rohan.joshi@flame.edu.in",
+    issueId: rohanIssue.issue!.id,
+    acknowledgement: true,
+    photoUrl: "https://example.com/test-photo.jpg",
+  });
+  assert(
+    !returnWithEmailFallback.error && returnWithEmailFallback.issue?.status === "return_submitted",
+    "Return submission with email fallback succeeds without 'Unauthenticated user' error"
+  );
+
+  // I. Admin confirms return
+  const finalConfirm = dbStore.confirmPhysicalReturn({
+    issueId: rohanIssue.issue!.id,
+    adminId: adminAuth.user.id,
+  });
+  assert(
+    !finalConfirm.error && finalConfirm.issue?.status === "returned",
+    "Admin confirms return; item returns to circulation"
+  );
+
+  // 10. Summary
   console.log("\n==================================================================");
   console.log(`Results: ${passedCount} PASSED, ${failedCount} FAILED`);
   console.log("==================================================================");
