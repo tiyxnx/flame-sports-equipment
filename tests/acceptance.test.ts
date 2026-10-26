@@ -33,6 +33,12 @@ async function runTests() {
     "Configured administrator asmi.malushte@flame.edu.in receives 'admin' role"
   );
 
+  const tiyanaAdminAuth = dbStore.authenticateUser("tiyana.shah@flame.edu.in", "Tiyana Shah");
+  assert(
+    !tiyanaAdminAuth.error && tiyanaAdminAuth.user.role === "admin",
+    "Administrator tiyana.shah@flame.edu.in receives 'admin' role"
+  );
+
   const invalidDomainAuth = dbStore.authenticateUser("intruder@gmail.com");
   assert(
     Boolean(invalidDomainAuth.error),

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dbStore } from "@/lib/db/store";
+import { dbStore, isAdminEmail } from "@/lib/db/store";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,11 +14,11 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = (adminId ? dbStore.getUserById(adminId) : undefined) ||
-      (adminEmail === "asmi.malushte@flame.edu.in" ? dbStore.getUserByEmail(adminEmail) : undefined);
+      (isAdminEmail(adminEmail) ? dbStore.getUserByEmail(adminEmail) : undefined);
 
-    if (!admin || admin.role !== "admin" || admin.email !== "asmi.malushte@flame.edu.in") {
+    if (!admin || admin.role !== "admin" || !isAdminEmail(admin.email)) {
       return NextResponse.json(
-        { error: "Access denied. Only the authorized administrator (asmi.malushte@flame.edu.in) can execute this action." },
+        { error: "Access denied. Administrator privileges required to execute this action." },
         { status: 403 }
       );
     }

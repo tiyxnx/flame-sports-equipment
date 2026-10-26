@@ -252,7 +252,7 @@ export default function HomePage() {
                     </button>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    Entering asmi.malushte@flame.edu.in loads Admin view; any other @flame.edu.in loads Student view.
+                    Entering asmi.malushte@flame.edu.in or tiyana.shah@flame.edu.in loads Admin view; any other @flame.edu.in loads Student view.
                   </p>
                 </form>
               )}

@@ -26,6 +26,11 @@ import { sendEmailNotification } from "../email-service";
 import { supabase } from "../supabase/client";
 
 const FLAME_DOMAIN = "@flame.edu.in";
+export const ADMIN_EMAILS = new Set(["asmi.malushte@flame.edu.in", "tiyana.shah@flame.edu.in"]);
+export function isAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
 const ADMIN_EMAIL = "asmi.malushte@flame.edu.in";
 const ADMIN_UUID = "00000000-0000-0000-0000-000000000001";
 
@@ -121,7 +126,7 @@ class HybridDataStore {
       };
     }
 
-    const isAdmin = cleanEmail === ADMIN_EMAIL;
+    const isAdmin = isAdminEmail(cleanEmail);
     const role = isAdmin ? "admin" : "student";
     const now = new Date().toISOString();
 
@@ -130,7 +135,11 @@ class HybridDataStore {
     );
 
     if (!existingUser) {
-      const userId = isAdmin ? ADMIN_UUID : crypto.randomUUID();
+      const userId = cleanEmail === "asmi.malushte@flame.edu.in"
+        ? ADMIN_UUID
+        : cleanEmail === "tiyana.shah@flame.edu.in"
+        ? "00000000-0000-0000-0000-000000000002"
+        : crypto.randomUUID();
       const newUser: User = {
         id: userId,
         email: cleanEmail,
@@ -167,7 +176,7 @@ class HybridDataStore {
       safeRun(
         supabase
           .from("users")
-          .update({ last_login_at: now })
+          .update({ role: existingUser.role, last_login_at: now })
           .eq("id", existingUser.id)
       );
     }

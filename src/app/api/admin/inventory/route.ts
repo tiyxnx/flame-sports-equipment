@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dbStore } from "@/lib/db/store";
+import { dbStore, isAdminEmail } from "@/lib/db/store";
 import { InventoryItemStatus } from "@/types";
 
 export async function GET(req: NextRequest) {
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const adminEmail = searchParams.get("adminEmail");
 
-    if (adminEmail !== "asmi.malushte@flame.edu.in") {
+    if (!isAdminEmail(adminEmail)) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     const { sport_id, equipment_type_id, equipment_number, admin_id } = body;
 
     const admin = dbStore.getUserById(admin_id);
-    if (!admin || admin.role !== "admin" || admin.email !== "asmi.malushte@flame.edu.in") {
+    if (!admin || admin.role !== "admin" || !isAdminEmail(admin.email)) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
@@ -53,7 +53,7 @@ export async function PATCH(req: NextRequest) {
     const { itemId, status, admin_id, notes } = body;
 
     const admin = dbStore.getUserById(admin_id);
-    if (!admin || admin.role !== "admin" || admin.email !== "asmi.malushte@flame.edu.in") {
+    if (!admin || admin.role !== "admin" || !isAdminEmail(admin.email)) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 

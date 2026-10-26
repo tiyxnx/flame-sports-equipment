@@ -26,6 +26,14 @@ export const INITIAL_USERS: User[] = [
     created_at: new Date().toISOString(),
     last_login_at: new Date().toISOString(),
   },
+  {
+    id: "00000000-0000-0000-0000-000000000002",
+    email: "tiyana.shah@flame.edu.in",
+    name: "Tiyana Shah",
+    role: "admin",
+    created_at: new Date().toISOString(),
+    last_login_at: new Date().toISOString(),
+  },
 ];
 
 // Official sports catalog
