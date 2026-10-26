@@ -67,13 +67,16 @@ class HybridDataStore {
     try {
       // 1. Hydrate users
       const { data: usersData } = await supabase.from("users").select("*");
-      if (usersData && usersData.length > 0) {
+      if (usersData) {
+        this.users.clear();
+        INITIAL_USERS.forEach((u) => this.users.set(u.id, { ...u }));
         usersData.forEach((u) => this.users.set(u.id, u as User));
       }
 
       // 2. Hydrate inventory items
       const { data: invData } = await supabase.from("inventory_items").select("*");
       if (invData && invData.length > 0) {
+        this.inventory.clear();
         invData.forEach((item) => {
           const sport = this.sports.get(item.sport_id);
           const eqType = this.equipmentTypes.get(item.equipment_type_id);
@@ -88,24 +91,28 @@ class HybridDataStore {
 
       // 3. Hydrate equipment issues
       const { data: issuesData } = await supabase.from("equipment_issues").select("*");
+      this.issues.clear();
       if (issuesData && issuesData.length > 0) {
         issuesData.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
       }
 
       // 4. Hydrate damage reports
       const { data: dmgData } = await supabase.from("damage_reports").select("*");
+      this.damageReports.clear();
       if (dmgData && dmgData.length > 0) {
         dmgData.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
       }
 
       // 5. Hydrate audit logs
       const { data: auditData } = await supabase.from("audit_logs").select("*");
+      this.auditLogs.clear();
       if (auditData && auditData.length > 0) {
         auditData.forEach((a) => this.auditLogs.set(a.id, a as AuditLog));
       }
 
       // 6. Hydrate notifications
       const { data: notifData } = await supabase.from("notification_logs").select("*");
+      this.notificationLogs.clear();
       if (notifData && notifData.length > 0) {
         notifData.forEach((n) => this.notificationLogs.set(n.id, n as NotificationLog));
       }

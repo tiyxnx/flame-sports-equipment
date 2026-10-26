@@ -310,35 +310,36 @@ async function runTests() {
     "Admin confirms return; item returns to circulation"
   );
 
-  // Post-test cleanup: Purge any test records created during test execution
+  // Post-test cleanup: Purge any test records created during test execution in correct FK order
   try {
-    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     const { supabase } = await import("../src/lib/supabase/client");
     const testEmails = ["rohan.joshi@flame.edu.in", "priya.nair@flame.edu.in"];
-    const { data: testIssues } = await supabase
-      .from("equipment_issues")
-      .select("id")
-      .in("user_email", testEmails);
-    const issueIds = (testIssues || []).map((i) => i.id);
 
-    if (issueIds.length > 0) {
-      await supabase.from("return_verification_events").delete().in("issue_id", issueIds);
-      await supabase.from("damage_reports").delete().in("issue_id", issueIds);
-      await supabase.from("equipment_issues").delete().in("id", issueIds);
-    }
-    await supabase.from("damage_reports").delete().in("equipment_number", ["#1", "#2", "#3", "#4"]);
+    // 1. notification_logs has FK to equipment_issues, must be deleted first
+    await supabase.from("notification_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // 2. return_verification_events has FK to equipment_issues
+    await supabase.from("return_verification_events").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // 3. damage_reports has FK to equipment_issues
+    await supabase.from("damage_reports").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // 4. equipment_issues now has no dependents and can be cleanly deleted
+    await supabase.from("equipment_issues").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // 5. audit_logs
+    await supabase.from("audit_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    // 6. Delete test student users only (keep admins)
     await supabase.from("users").delete().in("email", testEmails);
-    await supabase.from("notification_logs").delete().neq("id", "none");
-    await supabase.from("audit_logs").delete().neq("id", "none");
+
+    // 7. Reset all inventory items to available
     await supabase
       .from("inventory_items")
       .update({ status: "available", notes: null })
-      .in("id", [
-        "item-s-badminton-rkt-1",
-        "item-s-badminton-rkt-2",
-        "item-s-badminton-rkt-3",
-        "item-s-badminton-rkt-4",
-      ]);
+      .neq("id", "none");
+
     await dbStore.hydrateFromSupabase();
   } catch (e) {
     console.error("Post-test cleanup error:", e);
