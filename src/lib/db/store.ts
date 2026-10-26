@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import {
   User,
   Sport,
@@ -22,12 +23,17 @@ import {
 } from "./seed-data";
 import { getReturnDeadlineForDate, isOverdue } from "../date-utils";
 import { sendEmailNotification } from "../email-service";
+import { supabase } from "../supabase/client";
 
 const FLAME_DOMAIN = "@flame.edu.in";
 const ADMIN_EMAIL = "asmi.malushte@flame.edu.in";
+const ADMIN_UUID = "00000000-0000-0000-0000-000000000001";
 
-// In-Memory store instance (singleton across requests in server)
-class MemoryDataStore {
+function safeRun(p: PromiseLike<unknown>): void {
+  Promise.resolve(p).catch(() => {});
+}
+
+class HybridDataStore {
   private users: Map<string, User> = new Map();
   private sports: Map<string, Sport> = new Map();
   private equipmentTypes: Map<string, EquipmentType> = new Map();
@@ -40,6 +46,7 @@ class MemoryDataStore {
 
   constructor() {
     this.seed();
+    this.hydrateFromSupabase();
   }
 
   private seed() {
@@ -52,6 +59,58 @@ class MemoryDataStore {
     INITIAL_AUDIT_LOGS.forEach((a) => this.auditLogs.set(a.id, { ...a }));
   }
 
+  // Hydrate persistent data from Supabase in background
+  public async hydrateFromSupabase(): Promise<void> {
+    try {
+      // 1. Hydrate users
+      const { data: usersData } = await supabase.from("users").select("*");
+      if (usersData && usersData.length > 0) {
+        usersData.forEach((u) => this.users.set(u.id, u as User));
+      }
+
+      // 2. Hydrate inventory items
+      const { data: invData } = await supabase.from("inventory_items").select("*");
+      if (invData && invData.length > 0) {
+        invData.forEach((item) => {
+          const sport = this.sports.get(item.sport_id);
+          const eqType = this.equipmentTypes.get(item.equipment_type_id);
+          const enriched: InventoryItem = {
+            ...item,
+            sport_name: sport?.name || item.sport_name || "",
+            equipment_type_name: eqType?.name || item.equipment_type_name || "",
+          };
+          this.inventory.set(enriched.id, enriched);
+        });
+      }
+
+      // 3. Hydrate equipment issues
+      const { data: issuesData } = await supabase.from("equipment_issues").select("*");
+      if (issuesData && issuesData.length > 0) {
+        issuesData.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+      }
+
+      // 4. Hydrate damage reports
+      const { data: dmgData } = await supabase.from("damage_reports").select("*");
+      if (dmgData && dmgData.length > 0) {
+        dmgData.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
+      }
+
+      // 5. Hydrate audit logs
+      const { data: auditData } = await supabase.from("audit_logs").select("*");
+      if (auditData && auditData.length > 0) {
+        auditData.forEach((a) => this.auditLogs.set(a.id, a as AuditLog));
+      }
+
+      // 6. Hydrate notifications
+      const { data: notifData } = await supabase.from("notification_logs").select("*");
+      if (notifData && notifData.length > 0) {
+        notifData.forEach((n) => this.notificationLogs.set(n.id, n as NotificationLog));
+      }
+    } catch {
+      // Graceful fallback to memory store
+    }
+  }
+
   // --- Auth & Users ---
   public authenticateUser(email: string, name?: string): { user: User; error?: string } {
     const cleanEmail = email.trim().toLowerCase();
@@ -62,15 +121,18 @@ class MemoryDataStore {
       };
     }
 
-    let existingUser = Array.from(this.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
-
-    const now = new Date().toISOString();
     const isAdmin = cleanEmail === ADMIN_EMAIL;
     const role = isAdmin ? "admin" : "student";
+    const now = new Date().toISOString();
+
+    let existingUser = Array.from(this.users.values()).find(
+      (u) => u.email.toLowerCase() === cleanEmail
+    );
 
     if (!existingUser) {
+      const userId = isAdmin ? ADMIN_UUID : crypto.randomUUID();
       const newUser: User = {
-        id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: userId,
         email: cleanEmail,
         name: name || cleanEmail.split("@")[0].replace(".", " "),
         role,
@@ -79,6 +141,18 @@ class MemoryDataStore {
       };
       this.users.set(newUser.id, newUser);
       existingUser = newUser;
+
+      // Async persist to Supabase
+      safeRun(
+        supabase.from("users").upsert({
+          id: newUser.id,
+          email: newUser.email,
+          name: newUser.name,
+          role: newUser.role,
+          created_at: newUser.created_at,
+          last_login_at: newUser.last_login_at,
+        })
+      );
 
       this.logAudit(newUser.id, cleanEmail, "USER_REGISTERED", newUser.id, "user", {
         role,
@@ -89,6 +163,13 @@ class MemoryDataStore {
         existingUser.role = "admin";
       }
       this.users.set(existingUser.id, existingUser);
+
+      safeRun(
+        supabase
+          .from("users")
+          .update({ last_login_at: now })
+          .eq("id", existingUser.id)
+      );
     }
 
     return { user: existingUser };
@@ -100,20 +181,62 @@ class MemoryDataStore {
 
   public getUserByEmail(email: string): User | undefined {
     const cleanEmail = email.trim().toLowerCase();
-    return Array.from(this.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+    return Array.from(this.users.values()).find(
+      (u) => u.email.toLowerCase() === cleanEmail
+    );
   }
 
   // --- Sports & Inventory ---
   public getSports(): Sport[] {
+    safeRun(
+      supabase.from("sports").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((s) => this.sports.set(s.id, s as Sport));
+        }
+      })
+    );
     return Array.from(this.sports.values()).filter((s) => s.is_active);
   }
 
   public getEquipmentTypes(sportId?: string): EquipmentType[] {
+    safeRun(
+      supabase.from("equipment_types").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((eq) => this.equipmentTypes.set(eq.id, eq as EquipmentType));
+        }
+      })
+    );
     const all = Array.from(this.equipmentTypes.values()).filter((eq) => eq.is_active);
     if (sportId) {
       return all.filter((eq) => eq.sport_id === sportId);
     }
     return all;
+  }
+
+  public getInventory(): InventoryItem[] {
+    safeRun(
+      supabase.from("inventory_items").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((item) => {
+            const sport = this.sports.get(item.sport_id);
+            const eqType = this.equipmentTypes.get(item.equipment_type_id);
+            const enriched: InventoryItem = {
+              ...item,
+              sport_name: sport?.name || item.sport_name || "",
+              equipment_type_name: eqType?.name || item.equipment_type_name || "",
+            };
+            this.inventory.set(enriched.id, enriched);
+          });
+        }
+      })
+    );
+
+    return Array.from(this.inventory.values()).sort((a, b) => {
+      if (a.sport_name === b.sport_name) {
+        return a.equipment_number.localeCompare(b.equipment_number, undefined, { numeric: true });
+      }
+      return (a.sport_name || "").localeCompare(b.sport_name || "");
+    });
   }
 
   public getAvailableItems(sportId: string, equipmentTypeId: string): InventoryItem[] {
@@ -123,15 +246,6 @@ class MemoryDataStore {
         item.equipment_type_id === equipmentTypeId &&
         item.status === "available"
     );
-  }
-
-  public getInventory(): InventoryItem[] {
-    return Array.from(this.inventory.values()).sort((a, b) => {
-      if (a.sport_name === b.sport_name) {
-        return a.equipment_number.localeCompare(b.equipment_number, undefined, { numeric: true });
-      }
-      return (a.sport_name || "").localeCompare(b.sport_name || "");
-    });
   }
 
   public addInventoryItem(params: {
@@ -146,7 +260,6 @@ class MemoryDataStore {
       return { error: "Invalid sport or equipment type specified." };
     }
 
-    // Check duplicate equipment number in the same sport/type
     const duplicate = Array.from(this.inventory.values()).find(
       (i) =>
         i.sport_id === params.sport_id &&
@@ -173,6 +286,19 @@ class MemoryDataStore {
     };
 
     this.inventory.set(newItem.id, newItem);
+
+    safeRun(
+      supabase.from("inventory_items").insert({
+        id: newItem.id,
+        sport_id: newItem.sport_id,
+        equipment_type_id: newItem.equipment_type_id,
+        equipment_number: newItem.equipment_number,
+        status: newItem.status,
+        created_at: now,
+        updated_at: now,
+      })
+    );
+
     this.logAudit(params.admin_id, ADMIN_EMAIL, "INVENTORY_ITEM_ADDED", newItem.id, "inventory_item", {
       sport: sport.name,
       equipment: eqType.name,
@@ -192,10 +318,18 @@ class MemoryDataStore {
     if (!item) return { success: false, error: "Inventory item not found." };
 
     const oldStatus = item.status;
+    const now = new Date().toISOString();
     item.status = status;
-    item.updated_at = new Date().toISOString();
+    item.updated_at = now;
     if (notes) item.notes = notes;
     this.inventory.set(itemId, item);
+
+    safeRun(
+      supabase
+        .from("inventory_items")
+        .update({ status, updated_at: now, notes })
+        .eq("id", itemId)
+    );
 
     this.logAudit(adminId, ADMIN_EMAIL, "INVENTORY_STATUS_CHANGED", itemId, "inventory_item", {
       from: oldStatus,
@@ -207,31 +341,65 @@ class MemoryDataStore {
   }
 
   // --- Active Issue Check ---
-  public getActiveIssueForUser(userId: string): EquipmentIssue | null {
+  public getActiveIssueForUser(userId: string, userEmail?: string): EquipmentIssue | null {
     const activeStatuses: IssueStatus[] = ["issued", "return_submitted", "overdue", "not_returned"];
+    const cleanEmail = userEmail?.trim().toLowerCase();
+
+    // Background sync check
+    if (userId || cleanEmail) {
+      let query = supabase.from("equipment_issues").select("*").in("status", activeStatuses);
+      if (cleanEmail && userId) {
+        query = query.or(`user_id.eq.${userId},user_email.ilike.${cleanEmail}`);
+      } else if (cleanEmail) {
+        query = query.ilike("user_email", cleanEmail);
+      } else if (userId) {
+        query = query.eq("user_id", userId);
+      }
+      safeRun(
+        query.then(({ data }) => {
+          if (data && data.length > 0) {
+            data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+          }
+        })
+      );
+    }
+
     const found = Array.from(this.issues.values()).find(
-      (iss) => iss.user_id === userId && activeStatuses.includes(iss.status)
+      (iss) =>
+        activeStatuses.includes(iss.status) &&
+        (iss.user_id === userId || (cleanEmail && iss.user_email.toLowerCase() === cleanEmail))
     );
     return found || null;
   }
 
   // --- Issue Equipment (Atomic) ---
   public async issueEquipment(params: {
-    userId: string;
+    userId?: string;
+    userEmail?: string;
+    userName?: string;
     inventoryItemId: string;
   }): Promise<{ issue?: EquipmentIssue; error?: string }> {
-    const user = this.users.get(params.userId);
-    if (!user) return { error: "User not found or unauthenticated." };
+    let user = params.userId ? this.getUserById(params.userId) : undefined;
+    if (!user && params.userEmail) {
+      user = this.getUserByEmail(params.userEmail);
+    }
+    if (!user && params.userEmail && params.userEmail.endsWith(FLAME_DOMAIN)) {
+      const authRes = this.authenticateUser(params.userEmail, params.userName);
+      user = authRes.user;
+    }
+    if (!user) {
+      return { error: "User not found or unauthenticated." };
+    }
 
-    // 1. Enforce rule: One student may have no more than one active equipment issue at a time!
-    const activeIssue = this.getActiveIssueForUser(params.userId);
+    // Enforce 1 active issue rule
+    const activeIssue = this.getActiveIssueForUser(user.id, user.email);
     if (activeIssue) {
       return {
         error: `Active equipment issue detected (${activeIssue.sport_name} ${activeIssue.equipment_type_name} ${activeIssue.equipment_number}). You must return your current equipment before issuing another item.`,
       };
     }
 
-    // 2. Enforce item availability
+    // Enforce availability
     const item = this.inventory.get(params.inventoryItemId);
     if (!item) return { error: "Selected inventory item does not exist." };
     if (item.status !== "available") {
@@ -245,7 +413,6 @@ class MemoryDataStore {
     const sport = this.sports.get(item.sport_id);
     const eqType = this.equipmentTypes.get(item.equipment_type_id);
 
-    // Atomically create issue & mark item as issued
     const newIssue: EquipmentIssue = {
       id: `issue-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       user_id: user.id,
@@ -266,14 +433,14 @@ class MemoryDataStore {
       updated_at: nowIso,
     };
 
-    // Update item status
     item.status = "issued";
     item.updated_at = nowIso;
-
     this.issues.set(newIssue.id, newIssue);
     this.inventory.set(item.id, item);
 
-    // Log audit
+    safeRun(supabase.from("equipment_issues").insert(newIssue));
+    safeRun(supabase.from("inventory_items").update({ status: "issued", updated_at: nowIso }).eq("id", item.id));
+
     this.logAudit(user.id, user.email, "EQUIPMENT_ISSUED", newIssue.id, "equipment_issue", {
       sport: newIssue.sport_name,
       equipment: newIssue.equipment_type_name,
@@ -281,7 +448,6 @@ class MemoryDataStore {
       due: dueTimestamp,
     });
 
-    // Send confirmation email
     const emailLog = await sendEmailNotification({
       type: "issue_confirmation",
       recipientEmail: user.email,
@@ -294,12 +460,15 @@ class MemoryDataStore {
     });
     this.notificationLogs.set(emailLog.id, emailLog);
 
+    safeRun(supabase.from("notification_logs").insert(emailLog));
+
     return { issue: newIssue };
   }
 
   // --- Student Return Submission ---
   public async submitReturn(params: {
-    userId: string;
+    userId?: string;
+    userEmail?: string;
     issueId: string;
     acknowledgement: boolean;
     photoUrl?: string;
@@ -307,13 +476,29 @@ class MemoryDataStore {
     damageReported?: boolean;
     damageDescription?: string;
   }): Promise<{ issue?: EquipmentIssue; error?: string }> {
-    const user = this.users.get(params.userId);
+    let user = params.userId ? this.getUserById(params.userId) : undefined;
+    if (!user && params.userEmail) {
+      user = this.getUserByEmail(params.userEmail);
+    }
+    if (!user && params.userEmail && params.userEmail.endsWith(FLAME_DOMAIN)) {
+      const authRes = this.authenticateUser(params.userEmail);
+      user = authRes.user;
+    }
     if (!user) return { error: "Unauthenticated user." };
 
-    const issue = this.issues.get(params.issueId);
+    let issue = this.issues.get(params.issueId);
+    if (!issue) {
+      try {
+        const { data } = await supabase.from("equipment_issues").select("*").eq("id", params.issueId).maybeSingle();
+        if (data) {
+          issue = data as EquipmentIssue;
+          this.issues.set(issue.id, issue);
+        }
+      } catch {}
+    }
     if (!issue) return { error: "Issue record not found." };
 
-    if (issue.user_id !== user.id) {
+    if (issue.user_id !== user.id && issue.user_email.toLowerCase() !== user.email.toLowerCase()) {
       return { error: "Security violation: You can only return equipment issued under your own name." };
     }
 
@@ -340,13 +525,32 @@ class MemoryDataStore {
 
     this.issues.set(issue.id, issue);
 
-    // Update item status to return_submitted
     const item = this.inventory.get(issue.inventory_item_id);
     if (item) {
       item.status = "return_submitted";
       item.updated_at = now;
       this.inventory.set(item.id, item);
     }
+
+    safeRun(
+      supabase.from("equipment_issues").update({
+        return_submitted_at: issue.return_submitted_at,
+        return_acknowledgement: true,
+        return_photo_url: issue.return_photo_url,
+        student_notes: issue.student_notes,
+        status: "return_submitted",
+        damage_reported: issue.damage_reported,
+        damage_description: issue.damage_description,
+        updated_at: now,
+      }).eq("id", issue.id)
+    );
+
+    safeRun(
+      supabase.from("inventory_items").update({
+        status: "return_submitted",
+        updated_at: now,
+      }).eq("id", issue.inventory_item_id)
+    );
 
     this.logAudit(user.id, user.email, "RETURN_SUBMITTED", issue.id, "equipment_issue", {
       sport: issue.sport_name,
@@ -356,7 +560,6 @@ class MemoryDataStore {
       damageReported: Boolean(params.damageReported),
     });
 
-    // Send return submission confirmation email
     const emailLog = await sendEmailNotification({
       type: "return_submitted",
       recipientEmail: user.email,
@@ -371,10 +574,12 @@ class MemoryDataStore {
     });
     this.notificationLogs.set(emailLog.id, emailLog);
 
+    safeRun(supabase.from("notification_logs").insert(emailLog));
+
     return { issue };
   }
 
-  // --- Admin Action 1: Confirm Return (Physical Check Succeeded) ---
+  // --- Admin Action 1: Confirm Return ---
   public confirmPhysicalReturn(params: {
     issueId: string;
     adminId: string;
@@ -401,7 +606,6 @@ class MemoryDataStore {
     issue.updated_at = now;
     this.issues.set(issue.id, issue);
 
-    // Make inventory item available ONLY if not damaged/missing/retired
     const item = this.inventory.get(issue.inventory_item_id);
     if (item && item.status !== "damaged" && item.status !== "missing" && item.status !== "retired") {
       item.status = "available";
@@ -409,7 +613,6 @@ class MemoryDataStore {
       this.inventory.set(item.id, item);
     }
 
-    // Save verification event
     const eventId = `verif-${Date.now()}`;
     const verifEvent: ReturnVerificationEvent = {
       id: eventId,
@@ -424,6 +627,28 @@ class MemoryDataStore {
     };
     this.verificationEvents.set(eventId, verifEvent);
 
+    safeRun(
+      supabase.from("equipment_issues").update({
+        status: "returned",
+        physical_returned_at: now,
+        confirmed_by_admin_id: admin.id,
+        confirmed_by_admin_email: admin.email,
+        admin_notes: issue.admin_notes,
+        updated_at: now,
+      }).eq("id", issue.id)
+    );
+
+    if (item && item.status !== "damaged") {
+      safeRun(
+        supabase.from("inventory_items").update({
+          status: "available",
+          updated_at: now,
+        }).eq("id", issue.inventory_item_id)
+      );
+    }
+
+    safeRun(supabase.from("return_verification_events").insert(verifEvent));
+
     this.logAudit(admin.id, admin.email, "PHYSICAL_RETURN_CONFIRMED", issue.id, "equipment_issue", {
       studentEmail: issue.user_email,
       equipment: `${issue.sport_name} ${issue.equipment_type_name} ${issue.equipment_number}`,
@@ -433,7 +658,7 @@ class MemoryDataStore {
     return { issue };
   }
 
-  // --- Admin Action 2: Not Returned (Physical Check Failed) ---
+  // --- Admin Action 2: Not Returned ---
   public markNotReturned(params: {
     issueId: string;
     adminId: string;
@@ -450,7 +675,6 @@ class MemoryDataStore {
     const now = new Date().toISOString();
     const hadOnlineSubmission = Boolean(issue.return_submitted_at);
 
-    // Keep issue active and item unavailable. Mark as not_returned or overdue.
     issue.status = "not_returned";
     issue.admin_notes = params.notes || "Item checked in equipment room but not found physically.";
     issue.updated_at = now;
@@ -458,12 +682,11 @@ class MemoryDataStore {
 
     const item = this.inventory.get(issue.inventory_item_id);
     if (item) {
-      item.status = "issued"; // Remains unavailable
+      item.status = "issued";
       item.updated_at = now;
       this.inventory.set(item.id, item);
     }
 
-    // Save verification event
     const eventId = `verif-${Date.now()}`;
     const verifEvent: ReturnVerificationEvent = {
       id: eventId,
@@ -478,6 +701,16 @@ class MemoryDataStore {
     };
     this.verificationEvents.set(eventId, verifEvent);
 
+    safeRun(
+      supabase.from("equipment_issues").update({
+        status: "not_returned",
+        admin_notes: issue.admin_notes,
+        updated_at: now,
+      }).eq("id", issue.id)
+    );
+
+    safeRun(supabase.from("return_verification_events").insert(verifEvent));
+
     this.logAudit(admin.id, admin.email, "PHYSICAL_CHECK_NOT_RETURNED", issue.id, "equipment_issue", {
       studentEmail: issue.user_email,
       hadOnlineSubmission,
@@ -487,7 +720,7 @@ class MemoryDataStore {
     return { issue };
   }
 
-  // --- Admin Action 3: Report Damage ---
+  // --- Admin Action 3: Report Damage (Persisted) ---
   public async reportDamage(params: {
     inventoryItemId: string;
     adminId: string;
@@ -500,16 +733,31 @@ class MemoryDataStore {
       return { error: "Unauthorized: Administrator privileges required." };
     }
 
-    const item = this.inventory.get(params.inventoryItemId);
+    let item = this.inventory.get(params.inventoryItemId);
+    if (!item) {
+      try {
+        const { data } = await supabase.from("inventory_items").select("*").eq("id", params.inventoryItemId).maybeSingle();
+        if (data) {
+          const sport = this.sports.get(data.sport_id);
+          const eqType = this.equipmentTypes.get(data.equipment_type_id);
+          const enriched: InventoryItem = {
+            ...data,
+            sport_name: sport?.name || data.sport_name || "",
+            equipment_type_name: eqType?.name || data.equipment_type_name || "",
+          };
+          this.inventory.set(enriched.id, enriched);
+          item = enriched;
+        }
+      } catch {}
+    }
     if (!item) return { error: "Inventory item not found." };
 
     const now = new Date().toISOString();
-    // Update item status to damaged
     item.status = "damaged";
     item.updated_at = now;
     this.inventory.set(item.id, item);
 
-    // Find last or current issue to identify student issuer
+    // Find last issue
     let issue: EquipmentIssue | undefined;
     if (params.issueId) {
       issue = this.issues.get(params.issueId);
@@ -545,13 +793,24 @@ class MemoryDataStore {
     };
     this.damageReports.set(reportId, report);
 
+    safeRun(supabase.from("inventory_items").update({ status: "damaged", updated_at: now }).eq("id", item.id));
+    if (issue) {
+      safeRun(
+        supabase.from("equipment_issues").update({
+          damage_reported: true,
+          damage_description: params.description,
+          updated_at: now,
+        }).eq("id", issue.id)
+      );
+    }
+    safeRun(supabase.from("damage_reports").insert(report));
+
     this.logAudit(admin.id, admin.email, "DAMAGE_REPORTED", reportId, "damage_report", {
       item: `${item.sport_name} ${item.equipment_type_name} ${item.equipment_number}`,
       lastIssuer: issue?.user_email,
       description: params.description,
     });
 
-    // Send notification email to the last recorded student issuer
     if (issue?.user_email) {
       const emailLog = await sendEmailNotification({
         type: "damage_report",
@@ -566,6 +825,8 @@ class MemoryDataStore {
         reportTimestamp: now,
       });
       this.notificationLogs.set(emailLog.id, emailLog);
+
+      safeRun(supabase.from("notification_logs").insert(emailLog));
     }
 
     return { report };
@@ -581,7 +842,6 @@ class MemoryDataStore {
     const dispatchedLogs: NotificationLog[] = [];
 
     for (const issue of eligibleIssues) {
-      // Check if already sent 10 PM reminder for this issue today
       const alreadySent = Array.from(this.notificationLogs.values()).some(
         (n) => n.issue_id === issue.id && n.notification_type === "reminder_10pm"
       );
@@ -599,6 +859,8 @@ class MemoryDataStore {
         });
         this.notificationLogs.set(log.id, log);
         dispatchedLogs.push(log);
+
+        safeRun(supabase.from("notification_logs").insert(log));
       }
     }
 
@@ -615,14 +877,14 @@ class MemoryDataStore {
     const dispatchedLogs: NotificationLog[] = [];
 
     for (const issue of eligibleIssues) {
-      // Mark issue status as overdue
       if (issue.status !== "overdue") {
         issue.status = "overdue";
         issue.updated_at = new Date().toISOString();
         this.issues.set(issue.id, issue);
+
+        safeRun(supabase.from("equipment_issues").update({ status: "overdue", updated_at: issue.updated_at }).eq("id", issue.id));
       }
 
-      // Check if already sent 11 PM overdue email
       const alreadySent = Array.from(this.notificationLogs.values()).some(
         (n) => n.issue_id === issue.id && n.notification_type === "overdue_11pm"
       );
@@ -640,6 +902,10 @@ class MemoryDataStore {
         });
         this.notificationLogs.set(log.id, log);
         dispatchedLogs.push(log);
+
+        try {
+          await supabase.from("notification_logs").insert(log);
+        } catch {}
       }
     }
 
@@ -648,30 +914,65 @@ class MemoryDataStore {
 
   // --- Queries ---
   public getAllIssues(): EquipmentIssue[] {
+    safeRun(
+      supabase.from("equipment_issues").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((iss) => this.issues.set(iss.id, iss as EquipmentIssue));
+        }
+      })
+    );
     return Array.from(this.issues.values()).sort(
       (a, b) => new Date(b.issue_timestamp).getTime() - new Date(a.issue_timestamp).getTime()
     );
   }
 
   public getDamageReports(): DamageReport[] {
+    safeRun(
+      supabase.from("damage_reports").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((d) => this.damageReports.set(d.id, d as DamageReport));
+        }
+      })
+    );
     return Array.from(this.damageReports.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
 
   public getAuditLogs(): AuditLog[] {
+    safeRun(
+      supabase.from("audit_logs").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((a) => this.auditLogs.set(a.id, a as AuditLog));
+        }
+      })
+    );
     return Array.from(this.auditLogs.values()).sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
   }
 
   public getNotificationLogs(): NotificationLog[] {
+    safeRun(
+      supabase.from("notification_logs").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((n) => this.notificationLogs.set(n.id, n as NotificationLog));
+        }
+      })
+    );
     return Array.from(this.notificationLogs.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
 
   public getVerificationEvents(): ReturnVerificationEvent[] {
+    safeRun(
+      supabase.from("return_verification_events").select("*").then(({ data }) => {
+        if (data && data.length > 0) {
+          data.forEach((v) => this.verificationEvents.set(v.id, v as ReturnVerificationEvent));
+        }
+      })
+    );
     return Array.from(this.verificationEvents.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
@@ -697,10 +998,12 @@ class MemoryDataStore {
       metadata,
     };
     this.auditLogs.set(id, log);
+
+    safeRun(supabase.from("audit_logs").insert(log));
   }
 }
 
 // Global persistent instance in Node environment
-const globalForStore = global as unknown as { flameStore: MemoryDataStore };
-export const dbStore = globalForStore.flameStore || new MemoryDataStore();
+const globalForStore = global as unknown as { flameStore: HybridDataStore };
+export const dbStore = globalForStore.flameStore || new HybridDataStore();
 if (process.env.NODE_ENV !== "production") globalForStore.flameStore = dbStore;

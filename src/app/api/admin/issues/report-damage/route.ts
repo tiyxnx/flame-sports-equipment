@@ -4,16 +4,18 @@ import { dbStore } from "@/lib/db/store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { inventoryItemId, adminId, description, photoUrl, issueId } = body;
+    const { inventoryItemId, adminId, adminEmail, description, photoUrl, issueId } = body;
 
-    if (!inventoryItemId || !adminId || !description) {
+    if (!inventoryItemId || (!adminId && !adminEmail) || !description) {
       return NextResponse.json(
-        { error: "Inventory item, admin ID, and damage description are required." },
+        { error: "Inventory item, admin authorization, and damage description are required." },
         { status: 400 }
       );
     }
 
-    const admin = dbStore.getUserById(adminId);
+    const admin = (adminId ? dbStore.getUserById(adminId) : undefined) ||
+      (adminEmail === "asmi.malushte@flame.edu.in" ? dbStore.getUserByEmail(adminEmail) : undefined);
+
     if (!admin || admin.role !== "admin" || admin.email !== "asmi.malushte@flame.edu.in") {
       return NextResponse.json(
         { error: "Access denied. Only the authorized administrator (asmi.malushte@flame.edu.in) can report damage." },
@@ -23,7 +25,7 @@ export async function POST(req: NextRequest) {
 
     const result = await dbStore.reportDamage({
       inventoryItemId,
-      adminId,
+      adminId: admin.id,
       description,
       photoUrl,
       issueId,

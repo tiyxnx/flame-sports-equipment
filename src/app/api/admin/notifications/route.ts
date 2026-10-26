@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
-    const notifications = dbStore.getNotificationLogs();
+    const notifications = await dbStore.getNotificationLogs();
     return NextResponse.json({ notifications });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch notifications";

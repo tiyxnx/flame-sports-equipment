@@ -17,6 +17,7 @@ import {
   Check,
   Send,
   Eye,
+  Info,
 } from "lucide-react";
 
 interface AdminDashboardProps {
@@ -140,6 +141,7 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
         body: JSON.stringify({
           issueId: selectedIssueForAction.id,
           adminId: adminUser.id,
+          adminEmail: adminUser.email,
           notes: actionNotes,
         }),
       });
@@ -173,6 +175,7 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
         body: JSON.stringify({
           issueId: selectedIssueForAction.id,
           adminId: adminUser.id,
+          adminEmail: adminUser.email,
           notes: actionNotes,
         }),
       });
@@ -211,6 +214,7 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
           inventoryItemId: selectedIssueForAction.inventory_item_id,
           issueId: selectedIssueForAction.id,
           adminId: adminUser.id,
+          adminEmail: adminUser.email,
           description: damageDescription,
         }),
       });
@@ -812,27 +816,106 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
           <div className="p-4 bg-slate-50/70 border-b border-slate-200 text-xs">
             <h3 className="font-bold text-slate-900">Administrative Audit Trail</h3>
             <p className="text-slate-500">
-              Immutable record of all equipment checkout, return confirmations, missing checks, and damage reports
+              Immutable institutional record of equipment checkouts, return confirmations, missing checks, and damage reports
             </p>
           </div>
 
           <div className="p-4 divide-y divide-slate-100 space-y-3">
-            {auditLogs.map((log) => (
-              <div key={log.id} className="pt-3 first:pt-0 flex items-start justify-between text-xs">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-[#0B2545] font-mono">{log.event_type}</span>
-                    <span className="text-[11px] text-slate-400 font-mono">by {log.actor_email}</span>
+            {auditLogs.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">No audit trail records logged yet.</p>
+            ) : (
+              auditLogs.map((log) => {
+                const meta = (log.metadata || {}) as Record<string, unknown>;
+                let actionLabel = "Activity Logged";
+                let badgeStyle = "bg-slate-100 text-slate-700 border-slate-200";
+                let summaryText = `Event logged by ${log.actor_email}`;
+                let subText: string | undefined;
+
+                if (log.event_type === "EQUIPMENT_ISSUED") {
+                  const itemStr = `${meta.sport || ""} ${meta.equipment || ""} ${meta.number || ""}`.trim();
+                  actionLabel = "Equipment Issued";
+                  badgeStyle = "bg-blue-100 text-blue-800 border-blue-200";
+                  summaryText = `${itemStr || "Equipment"} checked out by ${log.actor_email}`;
+                  subText = "Return deadline: 11:00 PM IST today • Institutional liability disclaimer accepted";
+                } else if (log.event_type === "USER_REGISTERED") {
+                  const roleStr = meta.role === "admin" ? "Administrator" : "Student";
+                  actionLabel = "Account Registered";
+                  badgeStyle = "bg-purple-100 text-purple-800 border-purple-200";
+                  summaryText = `New ${roleStr} profile registered: ${log.actor_email}`;
+                  subText = "Authenticated with official @flame.edu.in institutional Google account";
+                } else if (log.event_type === "SYSTEM_INITIALIZED") {
+                  actionLabel = "System Initialized";
+                  badgeStyle = "bg-slate-100 text-slate-700 border-slate-300";
+                  summaryText = (meta.note as string) || "FLAME University Sports Equipment Room portal initialised";
+                  subText = "Standard institutional equipment guidelines and 11:00 PM IST return schedule active";
+                } else if (log.event_type === "RETURN_SUBMITTED") {
+                  const itemStr = `${meta.sport || ""} ${meta.equipment || ""} ${meta.number || ""}`.trim();
+                  const damageNote = meta.damageReported ? " (Wear or damage flagged by student)" : "";
+                  actionLabel = "Return Submitted";
+                  badgeStyle = "bg-amber-100 text-amber-800 border-amber-200";
+                  summaryText = `Student submitted return for ${itemStr || "equipment"} with camera evidence${damageNote}`;
+                  subText = "Awaiting physical verification on sports room counter by administrator";
+                } else if (log.event_type === "PHYSICAL_RETURN_CONFIRMED") {
+                  const itemStr = (meta.equipment as string) || "Equipment";
+                  const studentStr = meta.studentEmail ? ` from ${meta.studentEmail}` : "";
+                  actionLabel = "Return Confirmed";
+                  badgeStyle = "bg-emerald-100 text-emerald-800 border-emerald-200";
+                  summaryText = `Admin verified ${itemStr}${studentStr} on physical shelves and marked available`;
+                  subText = meta.notes ? `Admin notes: "${meta.notes}"` : "Physical condition verified clean";
+                } else if (log.event_type === "PHYSICAL_CHECK_NOT_RETURNED") {
+                  const itemStr = (meta.equipment as string) || "Equipment";
+                  const studentStr = meta.studentEmail ? ` from ${meta.studentEmail}` : "";
+                  actionLabel = "Physical Check Failed";
+                  badgeStyle = "bg-red-100 text-red-800 border-red-200";
+                  summaryText = `Physical check failed: ${itemStr}${studentStr} was NOT found in return area`;
+                  subText = meta.notes ? `Admin notes: "${meta.notes}"` : "Item remains marked active/unreturned";
+                } else if (log.event_type === "DAMAGE_REPORTED") {
+                  const itemStr = (meta.item as string) || "Equipment";
+                  const issuerStr = meta.lastIssuer ? ` (Last issuer: ${meta.lastIssuer})` : "";
+                  actionLabel = "Damage Report Filed";
+                  badgeStyle = "bg-rose-100 text-rose-800 border-rose-200";
+                  summaryText = `Damage reported on ${itemStr}${issuerStr}: ${(meta.description as string) || "Damage recorded"}`;
+                  subText = "Item taken out of circulation for Sports Committee review and repair";
+                } else if (log.event_type === "INVENTORY_ITEM_ADDED") {
+                  const itemStr = `${meta.sport || ""} ${meta.equipment || ""} ${meta.number || ""}`.trim();
+                  actionLabel = "Equipment Added";
+                  badgeStyle = "bg-indigo-100 text-indigo-800 border-indigo-200";
+                  summaryText = `Added new physical item ${itemStr} to equipment catalog`;
+                  subText = "Available immediately for student check-out";
+                } else if (log.event_type === "INVENTORY_STATUS_CHANGED") {
+                  actionLabel = "Status Changed";
+                  badgeStyle = "bg-cyan-100 text-cyan-800 border-cyan-200";
+                  summaryText = `Equipment status updated from "${meta.from || "unknown"}" to "${meta.to || "updated"}"`;
+                  subText = meta.notes ? `Notes: "${meta.notes}"` : undefined;
+                }
+
+                return (
+                  <div key={log.id} className="pt-3 first:pt-0 p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 text-xs space-y-1.5 transition hover:bg-slate-50">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide border uppercase ${badgeStyle}`}>
+                          {actionLabel}
+                        </span>
+                        <span className="text-slate-500 text-[11px]">
+                          By <strong className="text-slate-800 font-semibold">{log.actor_email}</strong>
+                        </span>
+                      </div>
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        {formatIstDateTime(log.timestamp)}
+                      </span>
+                    </div>
+                    <p className="font-semibold text-slate-900 text-xs">
+                      {summaryText}
+                    </p>
+                    {subText && (
+                      <p className="text-slate-500 text-[11px] leading-relaxed">
+                        {subText}
+                      </p>
+                    )}
                   </div>
-                  <pre className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200 font-mono whitespace-pre-wrap">
-                    {JSON.stringify(log.metadata, null, 2)}
-                  </pre>
-                </div>
-                <span className="text-[11px] text-slate-400 shrink-0 ml-4 font-mono">
-                  {formatIstDateTime(log.timestamp)}
-                </span>
-              </div>
-            ))}
+                );
+              })
+            )}
           </div>
         </div>
       )}
@@ -840,31 +923,59 @@ export default function AdminDashboard({ adminUser }: AdminDashboardProps) {
       {/* TAB 4: Dispatched Notifications Outbox */}
       {activeTab === "notifications" && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden space-y-4">
-          <div className="p-4 bg-slate-50/70 border-b border-slate-200 text-xs">
+          <div className="p-4 bg-slate-50/70 border-b border-slate-200 text-xs space-y-2">
             <h3 className="font-bold text-slate-900">Automated Email Outbox</h3>
             <p className="text-slate-500">
               Dispatched 10 PM reminders, 11 PM overdue notifications, and issue/return confirmations
             </p>
+            <div className="p-3 bg-blue-50/90 border border-blue-200 rounded-xl text-[11px] text-blue-900 flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>Live Email Delivery:</strong> All notification logs are recorded below. To deliver real emails directly into student Gmail inboxes, provide a free Resend API key in Vercel as <code className="bg-blue-100 text-blue-900 px-1 py-0.5 rounded font-mono">RESEND_API_KEY</code>.
+              </div>
+            </div>
           </div>
 
           <div className="p-4 divide-y divide-slate-100 space-y-3">
-            {notifications.map((notif) => (
-              <div key={notif.id} className="pt-3 first:pt-0 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900">{notif.subject}</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {formatIstDateTime(notif.attempt_time)}
-                  </span>
-                </div>
-                <div className="text-slate-500 text-[11px]">
-                  To: <span className="text-slate-800 font-semibold">{notif.recipient_email}</span> • Status:{" "}
-                  <span className="text-emerald-700 font-bold uppercase">{notif.delivery_status}</span>
-                </div>
-                <p className="text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 whitespace-pre-line text-[11px]">
-                  {notif.body}
-                </p>
-              </div>
-            ))}
+            {notifications.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">No notification emails dispatched yet.</p>
+            ) : (
+              notifications.map((notif) => {
+                const isSent = notif.delivery_status === "sent";
+                const isFailed = notif.delivery_status === "failed";
+                return (
+                  <div key={notif.id} className="pt-3 first:pt-0 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">{notif.subject}</span>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {formatIstDateTime(notif.attempt_time)}
+                      </span>
+                    </div>
+                    <div className="text-slate-500 text-[11px] flex items-center gap-2 flex-wrap">
+                      <span>To: <strong className="text-slate-800 font-semibold">{notif.recipient_email}</strong></span>
+                      <span>•</span>
+                      <span>Status:</span>
+                      {isSent ? (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold text-[10px] rounded-full border border-emerald-200 uppercase">
+                          Delivered via Resend
+                        </span>
+                      ) : isFailed ? (
+                        <span className="px-2 py-0.5 bg-red-100 text-red-800 font-bold text-[10px] rounded-full border border-red-200 uppercase">
+                          Delivery Failed
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] rounded-full border border-amber-200 uppercase" title="Add RESEND_API_KEY to send directly to Gmail">
+                          Logged in Outbox (Needs Email API Key)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 whitespace-pre-line text-[11px]">
+                      {notif.body}
+                    </p>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}

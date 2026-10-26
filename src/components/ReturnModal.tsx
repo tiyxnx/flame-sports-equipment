@@ -42,6 +42,7 @@ export default function ReturnModal({ user, activeIssue, onClose, onSuccess }: R
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
+          userEmail: user.email,
           issueId: activeIssue.id,
           acknowledgement,
           photoUrl: photoUrl || undefined,

@@ -19,7 +19,7 @@ import {
 // Sole initial administrator specified in the university requirements
 export const INITIAL_USERS: User[] = [
   {
-    id: "usr-admin-1",
+    id: "00000000-0000-0000-0000-000000000001",
     email: "asmi.malushte@flame.edu.in",
     name: "Asmi Malushte",
     role: "admin",

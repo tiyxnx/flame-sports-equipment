@@ -4,11 +4,11 @@ import { dbStore } from "@/lib/db/store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, inventoryItemId, disclaimerAcknowledged } = body;
+    const { userId, userEmail, userName, inventoryItemId, disclaimerAcknowledged } = body;
 
-    if (!userId || !inventoryItemId) {
+    if ((!userId && !userEmail) || !inventoryItemId) {
       return NextResponse.json(
-        { error: "User ID and Inventory Item ID are required." },
+        { error: "User identity and Inventory Item ID are required." },
         { status: 400 }
       );
     }
@@ -22,6 +22,8 @@ export async function POST(req: NextRequest) {
 
     const result = await dbStore.issueEquipment({
       userId,
+      userEmail,
+      userName,
       inventoryItemId,
     });
 

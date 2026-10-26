@@ -190,14 +190,17 @@ export async function sendEmailNotification(params: SendEmailParams): Promise<No
         const errorData = await res.json().catch(() => ({}));
         deliveryStatus = "failed";
         errorMessage = `Resend API Error: ${res.status} ${JSON.stringify(errorData)}`;
+      } else {
+        deliveryStatus = "sent";
       }
     } catch (err: unknown) {
       deliveryStatus = "failed";
       errorMessage = err instanceof Error ? err.message : "Failed to connect to email provider";
     }
   } else {
-    // Development / demo mode: queued & recorded cleanly in durable outbox
-    deliveryStatus = "sent";
+    // Recorded cleanly in outbox; requires RESEND_API_KEY to send to real student Gmail
+    deliveryStatus = "queued";
+    errorMessage = "Outbox Logged: Real inbox delivery requires RESEND_API_KEY in environment variables.";
   }
 
   const notificationLog: NotificationLog = {

@@ -106,6 +106,8 @@ export default function IssueModal({ user, onClose, onSuccess }: IssueModalProps
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
           inventoryItemId: selectedItem.id,
           disclaimerAcknowledged: true,
         }),

@@ -4,13 +4,14 @@ import { dbStore } from "@/lib/db/store";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
+    const userId = searchParams.get("userId") || undefined;
+    const userEmail = searchParams.get("userEmail") || undefined;
 
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required." }, { status: 400 });
+    if (!userId && !userEmail) {
+      return NextResponse.json({ error: "userId or userEmail is required." }, { status: 400 });
     }
 
-    const activeIssue = dbStore.getActiveIssueForUser(userId);
+    const activeIssue = await dbStore.getActiveIssueForUser(userId || "", userEmail);
 
     return NextResponse.json({
       activeIssue,

@@ -29,7 +29,7 @@ export default function StudentDashboard({ user }: StudentDashboardProps) {
   const fetchActiveIssue = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/issues/active?userId=${user.id}`);
+      const res = await fetch(`/api/issues/active?userId=${encodeURIComponent(user.id)}&userEmail=${encodeURIComponent(user.email)}`);
       const data = await res.json();
       if (res.ok && data.activeIssue) {
         setActiveIssue(data.activeIssue);
@@ -41,7 +41,7 @@ export default function StudentDashboard({ user }: StudentDashboardProps) {
     } finally {
       setLoading(false);
     }
-  }, [user.id]);
+  }, [user.id, user.email]);
 
   useEffect(() => {
     fetchActiveIssue();

@@ -10,9 +10,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
-    const auditLogs = dbStore.getAuditLogs();
-    const verificationEvents = dbStore.getVerificationEvents();
-    const damageReports = dbStore.getDamageReports();
+    const auditLogs = await dbStore.getAuditLogs();
+    const verificationEvents = await dbStore.getVerificationEvents();
+    const damageReports = await dbStore.getDamageReports();
 
     return NextResponse.json({
       auditLogs,

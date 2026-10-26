@@ -6,8 +6,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const sportId = searchParams.get("sportId");
 
-    const sports = dbStore.getSports();
-    const equipmentTypes = dbStore.getEquipmentTypes(sportId || undefined);
+    const sports = await dbStore.getSports();
+    const equipmentTypes = await dbStore.getEquipmentTypes(sportId || undefined);
 
     return NextResponse.json({
       sports,

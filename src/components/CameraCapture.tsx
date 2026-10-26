@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { Camera, RefreshCw, Upload, CheckCircle2, AlertCircle } from "lucide-react";
+import { Camera, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface CameraCaptureProps {
   onPhotoCaptured: (photoUrl: string) => void;
@@ -22,7 +22,7 @@ export default function CameraCapture({ onPhotoCaptured, photoUrl }: CameraCaptu
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Direct camera access is not supported on this browser. Please upload a photo.");
+        throw new Error("Direct camera access is not supported on this browser.");
       }
 
       // Try environment (rear) camera first, fallback to any video camera
@@ -83,21 +83,6 @@ export default function CameraCapture({ onPhotoCaptured, photoUrl }: CameraCaptu
     setCapturedImage(null);
     onPhotoCaptured("");
     startCamera();
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      if (result) {
-        setCapturedImage(result);
-        onPhotoCaptured(result);
-      }
-    };
-    reader.readAsDataURL(file);
   };
 
   useEffect(() => {
@@ -181,30 +166,16 @@ export default function CameraCapture({ onPhotoCaptured, photoUrl }: CameraCaptu
             Place the item on the sports equipment return counter or designated rack and take a clear photo.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5">
+          <div className="flex items-center justify-center">
             <button
               type="button"
               onClick={startCamera}
               disabled={isStartingCamera}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0B2545] hover:bg-[#133966] text-white text-xs font-semibold rounded-lg shadow-sm transition"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-[#0B2545] hover:bg-[#133966] text-white text-xs font-semibold rounded-xl shadow-sm transition"
             >
               <Camera className="w-4 h-4 text-red-400" />
               {isStartingCamera ? "Starting Camera..." : "Open Device Camera"}
             </button>
-
-            <span className="text-xs text-slate-400">or</span>
-
-            <label className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer transition">
-              <Upload className="w-4 h-4 text-slate-500" />
-              Upload Image
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </label>
           </div>
 
           {cameraError && (
@@ -212,7 +183,7 @@ export default function CameraCapture({ onPhotoCaptured, photoUrl }: CameraCaptu
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-medium">Camera notice</p>
-                <p className="text-amber-800 text-[11px]">{cameraError}. Please use the &quot;Upload Image&quot; option above to select a photo from your device.</p>
+                <p className="text-amber-800 text-[11px]">{cameraError}. Please enable camera access in your browser to take return photo evidence.</p>
               </div>
             </div>
           )}

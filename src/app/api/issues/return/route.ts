@@ -6,6 +6,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const {
       userId,
+      userEmail,
       issueId,
       acknowledgement,
       photoUrl,
@@ -14,9 +15,9 @@ export async function POST(req: NextRequest) {
       damageDescription,
     } = body;
 
-    if (!userId || !issueId) {
+    if ((!userId && !userEmail) || !issueId) {
       return NextResponse.json(
-        { error: "User ID and Issue ID are required." },
+        { error: "User identity and Issue ID are required." },
         { status: 400 }
       );
     }
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
 
     const result = await dbStore.submitReturn({
       userId,
+      userEmail,
       issueId,
       acknowledgement: Boolean(acknowledgement),
       photoUrl,

@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Administrator authorization required." }, { status: 403 });
     }
 
-    const items = dbStore.getInventory();
+    const items = await dbStore.getInventory();
     return NextResponse.json({ items });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch inventory";

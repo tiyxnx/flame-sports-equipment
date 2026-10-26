@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status");
     const search = searchParams.get("search")?.toLowerCase();
 
-    let issues = dbStore.getAllIssues();
+    let issues = await dbStore.getAllIssues();
 
     if (sport && sport !== "all") {
       issues = issues.filter((i) => i.sport_id === sport || i.sport_name.toLowerCase() === sport.toLowerCase());
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const inventory = dbStore.getInventory();
+    const inventory = await dbStore.getInventory();
     const metrics = {
       totalInventory: inventory.length,
       availableItems: inventory.filter((i) => i.status === "available").length,

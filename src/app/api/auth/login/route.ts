@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Email is required." }, { status: 400 });
     }
 
-    const result = dbStore.authenticateUser(email, name);
+    const result = await dbStore.authenticateUser(email, name);
 
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: 403 });

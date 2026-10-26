@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const items = dbStore.getAvailableItems(sportId, equipmentTypeId);
+    const items = await dbStore.getAvailableItems(sportId, equipmentTypeId);
 
     return NextResponse.json({
       items,
